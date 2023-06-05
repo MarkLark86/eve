@@ -5,6 +5,7 @@ import hashlib
 from datetime import datetime, timedelta
 
 from bson.json_util import dumps
+from quart.utils import is_coroutine_function
 
 from eve.tests import TestBase
 from eve.utils import (config, date_to_str, debug_error_message, document_etag,
@@ -18,116 +19,116 @@ class TestUtils(TestBase):
     flaskapp context
     """
 
-    def setUp(self):
-        super().setUp()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
         self.dt_fmt = config.DATE_FORMAT
         self.datestr = "Tue, 18 Sep 2012 10:12:30 GMT"
         self.valid = datetime.strptime(self.datestr, self.dt_fmt)
         self.etag = "56eaadbbd9fa287e7270cf13a41083c94f52ab9b"
 
-    def test_parse_request_where(self):
+    async def test_parse_request_where(self):
         self.app.config["DOMAIN"][self.known_resource]["allowed_filters"] = ["ref"]
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             self.assertEqual(parse_request(self.known_resource).where, None)
-        with self.app.test_request_context("/?where=hello"):
+        async with self.app.test_request_context("/?where=hello"):
             self.assertEqual(parse_request(self.known_resource).where, "hello")
 
-    def test_parse_request_sort(self):
-        with self.app.test_request_context():
+    async def test_parse_request_sort(self):
+        async with self.app.test_request_context(path="/"):
             self.assertEqual(parse_request(self.known_resource).sort, None)
-        with self.app.test_request_context("/?sort=hello"):
+        async with self.app.test_request_context("/?sort=hello"):
             self.assertEqual(parse_request(self.known_resource).sort, "hello")
 
-    def test_parse_request_page(self):
-        with self.app.test_request_context():
+    async def test_parse_request_page(self):
+        async with self.app.test_request_context(path="/"):
             self.assertEqual(parse_request(self.known_resource).page, 1)
-        with self.app.test_request_context("/?page=2"):
+        async with self.app.test_request_context("/?page=2"):
             self.assertEqual(parse_request(self.known_resource).page, 2)
-        with self.app.test_request_context("/?page=-1"):
+        async with self.app.test_request_context("/?page=-1"):
             self.assertEqual(parse_request(self.known_resource).page, 1)
-        with self.app.test_request_context("/?page=0"):
+        async with self.app.test_request_context("/?page=0"):
             self.assertEqual(parse_request(self.known_resource).page, 1)
-        with self.app.test_request_context("/?page=1.1"):
+        async with self.app.test_request_context("/?page=1.1"):
             self.assertEqual(parse_request(self.known_resource).page, 1)
-        with self.app.test_request_context("/?page=string"):
+        async with self.app.test_request_context("/?page=string"):
             self.assertEqual(parse_request(self.known_resource).page, 1)
 
-    def test_parse_request_max_results(self):
+    async def test_parse_request_max_results(self):
         default = config.PAGINATION_DEFAULT
         limit = config.PAGINATION_LIMIT
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             self.assertEqual(parse_request(self.known_resource).max_results, default)
-        with self.app.test_request_context("/?max_results=%d" % (limit + 1)):
+        async with self.app.test_request_context("/?max_results=%d" % (limit + 1)):
             self.assertEqual(parse_request(self.known_resource).max_results, limit)
-        with self.app.test_request_context("/?max_results=2"):
+        async with self.app.test_request_context("/?max_results=2"):
             self.assertEqual(parse_request(self.known_resource).max_results, 2)
-        with self.app.test_request_context("/?max_results=-1"):
+        async with self.app.test_request_context("/?max_results=-1"):
             self.assertEqual(parse_request(self.known_resource).max_results, default)
-        with self.app.test_request_context("/?max_results=0"):
+        async with self.app.test_request_context("/?max_results=0"):
             self.assertEqual(parse_request(self.known_resource).max_results, default)
-        with self.app.test_request_context("/?max_results=1.1"):
+        async with self.app.test_request_context("/?max_results=1.1"):
             self.assertEqual(parse_request(self.known_resource).max_results, 1)
-        with self.app.test_request_context("/?max_results=string"):
+        async with self.app.test_request_context("/?max_results=string"):
             self.assertEqual(parse_request(self.known_resource).max_results, default)
 
-    def test_parse_request_max_results_disabled_pagination(self):
+    async def test_parse_request_max_results_disabled_pagination(self):
         self.app.config["DOMAIN"][self.known_resource]["pagination"] = False
         default = 0
         limit = config.PAGINATION_LIMIT
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             self.assertEqual(parse_request(self.known_resource).max_results, default)
-        with self.app.test_request_context("/?max_results=%d" % (limit + 1)):
+        async with self.app.test_request_context("/?max_results=%d" % (limit + 1)):
             self.assertEqual(parse_request(self.known_resource).max_results, limit + 1)
-        with self.app.test_request_context("/?max_results=2"):
+        async with self.app.test_request_context("/?max_results=2"):
             self.assertEqual(parse_request(self.known_resource).max_results, 2)
-        with self.app.test_request_context("/?max_results=-1"):
+        async with self.app.test_request_context("/?max_results=-1"):
             self.assertEqual(parse_request(self.known_resource).max_results, default)
-        with self.app.test_request_context("/?max_results=0"):
+        async with self.app.test_request_context("/?max_results=0"):
             self.assertEqual(parse_request(self.known_resource).max_results, default)
-        with self.app.test_request_context("/?max_results=1.1"):
+        async with self.app.test_request_context("/?max_results=1.1"):
             self.assertEqual(parse_request(self.known_resource).max_results, 1)
-        with self.app.test_request_context("/?max_results=string"):
+        async with self.app.test_request_context("/?max_results=string"):
             self.assertEqual(parse_request(self.known_resource).max_results, default)
 
-    def test_parse_request_if_modified_since(self):
+    async def test_parse_request_if_modified_since(self):
         ims = "If-Modified-Since"
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             self.assertEqual(parse_request(self.known_resource).if_modified_since, None)
-        with self.app.test_request_context(headers=None):
+        async with self.app.test_request_context(path="/", headers=None):
             self.assertEqual(parse_request(self.known_resource).if_modified_since, None)
-        with self.app.test_request_context(headers={ims: self.datestr}):
+        async with self.app.test_request_context(path="/", headers={ims: self.datestr}):
             self.assertEqual(
                 parse_request(self.known_resource).if_modified_since,
                 self.valid + timedelta(seconds=1),
             )
-        with self.app.test_request_context(headers={ims: "not-a-date"}):
+        async with self.app.test_request_context(path="/", headers={ims: "not-a-date"}):
             self.assertRaises(ValueError, parse_request, self.known_resource)
-        with self.app.test_request_context(
-            headers={ims: self.datestr.replace("GMT", "UTC")}
+        async with self.app.test_request_context(
+            path="/", headers={ims: self.datestr.replace("GMT", "UTC")}
         ):
             self.assertRaises(ValueError, parse_request, self.known_resource)
             self.assertRaises(ValueError, parse_request, self.known_resource)
 
-    def test_parse_request_if_none_match(self):
-        with self.app.test_request_context():
+    async def test_parse_request_if_none_match(self):
+        async with self.app.test_request_context(path="/"):
             self.assertEqual(parse_request(self.known_resource).if_none_match, None)
-        with self.app.test_request_context(headers=None):
+        async with self.app.test_request_context(path="/", headers=None):
             self.assertEqual(parse_request(self.known_resource).if_none_match, None)
-        with self.app.test_request_context(headers={"If-None-Match": self.etag}):
+        async with self.app.test_request_context(path="/", headers={"If-None-Match": self.etag}):
             self.assertEqual(
                 parse_request(self.known_resource).if_none_match, self.etag
             )
 
-    def test_parse_request_if_match(self):
-        with self.app.test_request_context():
+    async def test_parse_request_if_match(self):
+        async with self.app.test_request_context(path="/"):
             self.assertEqual(parse_request(self.known_resource).if_match, None)
-        with self.app.test_request_context(headers=None):
+        async with self.app.test_request_context(path="/", headers=None):
             self.assertEqual(parse_request(self.known_resource).if_match, None)
-        with self.app.test_request_context(headers={"If-Match": self.etag}):
+        async with self.app.test_request_context(path="/", headers={"If-Match": self.etag}):
             self.assertEqual(parse_request(self.known_resource).if_match, self.etag)
 
-    def test_weak_date(self):
-        with self.app.test_request_context():
+    async def test_weak_date(self):
+        async with self.app.test_request_context(path="/"):
             self.app.config["DATE_FORMAT"] = "%Y-%m-%d"
             self.assertEqual(weak_date(self.datestr), self.valid + timedelta(seconds=1))
 
@@ -153,19 +154,19 @@ class TestUtils(TestBase):
             querydef(max_results=10, sort="sortpart"), "?max_results=10&sort=sortpart"
         )
 
-    def test_document_etag(self):
+    async def test_document_etag(self):
         test = {"key1": "value1", "another": "value2"}
         challenge = dumps(test, sort_keys=True).encode("utf-8")
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             self.assertEqual(hashlib.sha1(challenge).hexdigest(), document_etag(test))
 
-    def test_document_etag_ignore_fields(self):
+    async def test_document_etag_ignore_fields(self):
         test = {"key1": "value1", "key2": "value2"}
         test_copy = copy.deepcopy(test)
         ignore_fields = ["key2"]
         test_without_ignore = {"key1": "value1"}
         challenge = dumps(test_without_ignore, sort_keys=True).encode("utf-8")
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             self.assertEqual(
                 hashlib.sha1(challenge).hexdigest(), document_etag(test, ignore_fields)
             )
@@ -176,7 +177,7 @@ class TestUtils(TestBase):
         ignore_fields = ["key3"]
         test_without_ignore = {"key1": "value1", "key2": "value2"}
         challenge = dumps(test_without_ignore, sort_keys=True).encode("utf-8")
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             self.assertEqual(
                 hashlib.sha1(challenge).hexdigest(), document_etag(test, ignore_fields)
             )
@@ -187,7 +188,7 @@ class TestUtils(TestBase):
         ignore_fields = ["dict.key2"]
         test_without_ignore = {"key1": "value1", "dict": {"key3": "value3"}}
         challenge = dumps(test_without_ignore, sort_keys=True).encode("utf-8")
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             self.assertEqual(
                 hashlib.sha1(challenge).hexdigest(), document_etag(test, ignore_fields)
             )
@@ -198,7 +199,7 @@ class TestUtils(TestBase):
         ignore_fields = ["dict2.key3"]
         test_without_ignore = {"key1": "value1", "dict": {"key2": "value2"}}
         challenge = dumps(test_without_ignore, sort_keys=True).encode("utf-8")
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             self.assertEqual(
                 hashlib.sha1(challenge).hexdigest(), document_etag(test, ignore_fields)
             )
@@ -212,8 +213,8 @@ class TestUtils(TestBase):
             list(extract_key_values("key1", test)), ["value1", "value2", "value3"]
         )
 
-    def test_debug_error_message(self):
-        with self.app.test_request_context():
+    async def test_debug_error_message(self):
+        async with self.app.test_request_context(path="/"):
             self.app.config["DEBUG"] = False
             self.assertEqual(debug_error_message("An error message"), None)
             self.app.config["DEBUG"] = True
@@ -221,69 +222,69 @@ class TestUtils(TestBase):
                 debug_error_message("An error message"), "An error message"
             )
 
-    def test_validate_filters_when_custom_types_are_used(self):
+    async def test_validate_filters_when_custom_types_are_used(self):
         # Filters validation should operate on the active validator instance,
         # not on Cerberus' standard one. See #1154.
         self.app.config["VALIDATE_FILTERS"] = True
-        response, status = self.get(self.known_resource, query='?where={"tid":"1234"}')
+        response, status = await self.get(self.known_resource, query='?where={"tid":"1234"}')
         self.assert400(status)
         self.assertTrue("filter on 'tid' is invalid" in response["_error"]["message"])
 
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, query='?where={"tid":"5a1154523a6bcc1d245e143d"}'
         )
         self.assert200(status)
 
-    def test_validate_filters(self):
+    async def test_validate_filters(self):
         self.app.config["DOMAIN"][self.known_resource]["allowed_filters"] = []
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             self.assertTrue(
-                "key" in validate_filters({"key": "val"}, self.known_resource)
+                "key" in (await validate_filters({"key": "val"}, self.known_resource))
             )
             self.assertTrue(
                 "key"
-                in validate_filters({"key": ["val1", "val2"]}, self.known_resource)
+                in (await validate_filters({"key": ["val1", "val2"]}, self.known_resource))
             )
             self.assertTrue(
                 "key"
-                in validate_filters(
+                in (await validate_filters(
                     {"key": {"$in": ["val1", "val2"]}}, self.known_resource
-                )
+                ))
             )
             self.assertTrue(
                 "key"
-                in validate_filters(
+                in (await validate_filters(
                     {"$or": [{"key": "val1"}, {"key": "val2"}]}, self.known_resource
-                )
+                ))
             )
             self.assertTrue(
-                "$or" in validate_filters({"$or": "val"}, self.known_resource)
+                "$or" in (await validate_filters({"$or": "val"}, self.known_resource))
             )
             self.assertTrue(
-                "$or" in validate_filters({"$or": {"key": "val1"}}, self.known_resource)
+                "$or" in (await validate_filters({"$or": {"key": "val1"}}, self.known_resource))
             )
             self.assertTrue(
-                "$or" in validate_filters({"$or": ["val"]}, self.known_resource)
+                "$or" in (await validate_filters({"$or": ["val"]}, self.known_resource))
             )
 
         self.app.config["DOMAIN"][self.known_resource]["allowed_filters"] = ["key"]
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             self.assertTrue(
-                validate_filters({"key": "val"}, self.known_resource) is None
+                (await validate_filters({"key": "val"}, self.known_resource)) is None
             )
             self.assertTrue(
-                validate_filters({"key": ["val1", "val2"]}, self.known_resource) is None
+                (await validate_filters({"key": ["val1", "val2"]}, self.known_resource)) is None
             )
             self.assertTrue(
-                validate_filters(
+                (await validate_filters(
                     {"key": {"$in": ["val1", "val2"]}}, self.known_resource
-                )
+                ))
                 is None
             )
             self.assertTrue(
-                validate_filters(
+                (await validate_filters(
                     {"$or": [{"key": "val1"}, {"key": "val2"}]}, self.known_resource
-                )
+                ))
                 is None
             )
 
@@ -292,19 +293,19 @@ class TestUtils(TestBase):
         self.assertEqual(dt, datetime)
 
 
-class DummyEvent():
+class DummyEventAsyncIO():
     """
-    Even handler that records the call parameters and asserts a check
+        Even handler that records the call parameters and asserts a check
 
-    Usage::
+        Usage::
 
-        app = Eve()
-        app.on_my_event = DummyEvent(element_not_deleted)
+            app = Eve()
+            app.on_my_event = DummyEvent(element_not_deleted)
 
-    In the test::
+        In the test::
 
-        assert app.on_my_event.called[0] == expected_param_0
-    """
+            assert app.on_my_event.called[0] == expected_param_0
+        """
 
     def __init__(self, check, deepcopy=False):
         """
@@ -320,8 +321,11 @@ class DummyEvent():
         self.__check = check
         self.__deepcopy = deepcopy
 
-    def __call__(self, *args):
-        assert self.__check()
+    async def __call__(self, *args):
+        if is_coroutine_function(self.__check):
+            assert (await self.__check())
+        else:
+            assert self.__check()
         # In some method the arguments are changed after the events
         if self.__deepcopy:
             args = copy.deepcopy(args)

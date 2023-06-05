@@ -17,7 +17,7 @@ from __future__ import print_function
     This snippet by Nicola Iarocci can be used freely for anything you like.
     Consider it public domain.
 """
-from flask import request
+from quart import request
 from notifications_settings import SETTINGS
 
 from eve import Eve

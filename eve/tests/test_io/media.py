@@ -4,6 +4,7 @@ from unittest import TestCase
 
 from bson import ObjectId
 
+from quart.datastructures import FileStorage
 from eve import ETAG, ISSUES, STATUS, STATUS_ERR, STATUS_OK
 from eve.io.media import MediaStorage
 from eve.io.mongo import GridFSMediaStorage
@@ -25,8 +26,8 @@ class TestMediaStorage(TestCase):
 
 
 class TestGridFSMediaStorage(TestBase):
-    def setUp(self):
-        super().setUp()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
         self.url = self.known_resource_url
         self.resource = self.known_resource
         self.headers = [("Content-Type", "multipart/form-data")]
@@ -39,11 +40,11 @@ class TestGridFSMediaStorage(TestBase):
         self.assertRaises(TypeError, GridFSMediaStorage)
         self.assertRaises(TypeError, GridFSMediaStorage, "hello")
 
-    def test_gridfs_media_storage_post(self):
+    async def test_gridfs_media_storage_post(self):
         # send something different than a file and get an error back
         data = {"media": "not a file"}
-        r, s = self.parse_response(
-            self.test_client.post(self.url, data=data, headers=self.headers)
+        r, s = await self.parse_response(
+            await self.test_client.post(self.url, form=data, headers=self.headers)
         )
         self.assertEqual(STATUS_ERR, r[STATUS])
 
@@ -52,16 +53,16 @@ class TestGridFSMediaStorage(TestBase):
         # also validates ordinary fields
         self.assertTrue("required" in r[ISSUES][self.test_field])
 
-        r, s = self._post()
+        r, s = await self._post()
         self.assertEqual(STATUS_OK, r[STATUS])
 
         # compare original and returned data
         _id = r[self.id_field]
-        self.assertMediaField(_id, self.encoded, self.clean)
+        await self.assertMediaField(_id, self.encoded, self.clean)
 
         # GET the file at the resource endpoint
         where = 'where={"%s": "%s"}' % (self.id_field, _id)
-        r, s = self.parse_response(self.test_client.get("%s?%s" % (self.url, where)))
+        r, s = await self.parse_response(await self.test_client.get("%s?%s" % (self.url, where)))
         self.assertEqual(len(r["_items"]), 1)
         returned = r["_items"][0]["media"]
 
@@ -71,11 +72,11 @@ class TestGridFSMediaStorage(TestBase):
         # which decodes to the original clean
         self.assertEqual(base64.b64decode(returned.encode()), self.clean)
 
-    def test_gridfs_media_storage_post_excluded_file_in_result(self):
+    async def test_gridfs_media_storage_post_excluded_file_in_result(self):
         # send something different than a file and get an error back
         data = {"media": "not a file"}
-        r, s = self.parse_response(
-            self.test_client.post(self.url, data=data, headers=self.headers)
+        r, s = await self.parse_response(
+            await self.test_client.post(self.url, form=data, headers=self.headers)
         )
         self.assertEqual(STATUS_ERR, r[STATUS])
 
@@ -84,7 +85,7 @@ class TestGridFSMediaStorage(TestBase):
         # also validates ordinary fields
         self.assertTrue("required" in r[ISSUES][self.test_field])
 
-        r, s = self._post()
+        r, s = await self._post()
         self.assertEqual(STATUS_OK, r[STATUS])
 
         self.app.config["RETURN_MEDIA_AS_BASE64_STRING"] = False
@@ -93,15 +94,15 @@ class TestGridFSMediaStorage(TestBase):
 
         # GET the file at the resource endpoint
         where = 'where={"%s": "%s"}' % (self.id_field, _id)
-        r, s = self.parse_response(self.test_client.get("%s?%s" % (self.url, where)))
+        r, s = await self.parse_response(await self.test_client.get("%s?%s" % (self.url, where)))
         self.assertEqual(len(r["_items"]), 1)
         returned = r["_items"][0]["media"]
 
         # returned value is a base64 encoded string
         self.assertEqual(returned, None)
 
-    def test_gridfs_media_storage_post_extended(self):
-        r, s = self._post()
+    async def test_gridfs_media_storage_post_extended(self):
+        r, s = await self._post()
         self.assertEqual(STATUS_OK, r[STATUS])
 
         # request extended format file response
@@ -109,11 +110,11 @@ class TestGridFSMediaStorage(TestBase):
 
         # compare original and returned data
         _id = r[self.id_field]
-        self.assertMediaFieldExtended(_id, self.encoded, self.clean)
+        await self.assertMediaFieldExtended(_id, self.encoded, self.clean)
 
         # GET the file at the resource endpoint
         where = 'where={"%s": "%s"}' % (self.id_field, _id)
-        r, s = self.parse_response(self.test_client.get("%s?%s" % (self.url, where)))
+        r, s = await self.parse_response(await self.test_client.get("%s?%s" % (self.url, where)))
         self.assertEqual(len(r["_items"]), 1)
         returned = r["_items"][0]["media"]
 
@@ -127,8 +128,8 @@ class TestGridFSMediaStorage(TestBase):
         self.assertEqual(returned["content_type"], "text/plain")
         self.assertEqual(returned["length"], 16)
 
-    def test_gridfs_media_storage_post_extended_excluded_file_in_result(self):
-        r, s = self._post()
+    async def test_gridfs_media_storage_post_extended_excluded_file_in_result(self):
+        r, s = await self._post()
         self.assertEqual(STATUS_OK, r[STATUS])
 
         # request extended format file response
@@ -139,7 +140,7 @@ class TestGridFSMediaStorage(TestBase):
 
         # GET the file at the resource endpoint
         where = 'where={"%s": "%s"}' % (self.id_field, _id)
-        r, s = self.parse_response(self.test_client.get("%s?%s" % (self.url, where)))
+        r, s = await self.parse_response(await self.test_client.get("%s?%s" % (self.url, where)))
         self.assertEqual(len(r["_items"]), 1)
         returned = r["_items"][0]["media"]
 
@@ -150,17 +151,17 @@ class TestGridFSMediaStorage(TestBase):
         self.assertEqual(returned["content_type"], "text/plain")
         self.assertEqual(returned["length"], 16)
 
-    def test_gridfs_media_storage_put(self):
-        r, s = self._post()
+    async def test_gridfs_media_storage_put(self):
+        r, s = await self._post()
         _id = r[self.id_field]
         etag = r[ETAG]
 
         # compare original and returned data
-        self.assertMediaField(_id, self.encoded, self.clean)
+        await self.assertMediaField(_id, self.encoded, self.clean)
 
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             # retrieve media_id
-            media_id = self.assertMediaStored(_id)
+            media_id = await self.assertMediaStored(_id)
 
         # PUT replaces the file with new one
         clean = b"my new file contents"
@@ -169,38 +170,45 @@ class TestGridFSMediaStorage(TestBase):
         data = {"media": (BytesIO(clean), "test.txt"), test_field: test_value}
         headers = [("Content-Type", "multipart/form-data"), ("If-Match", etag)]
 
-        r, s = self.parse_response(
-            self.test_client.put(
-                ("%s/%s" % (self.url, _id)), data=data, headers=headers
+        r, s = await self.parse_response(
+            await self.test_client.put(
+                ("%s/%s" % (self.url, _id)),
+                form={test_field: test_value},
+                files={"media": FileStorage(
+                    BytesIO(clean),
+                    filename="test.txt",
+                    content_type="plain/text",
+                )},
+                headers=headers
             )
         )
         self.assertEqual(STATUS_OK, r[STATUS])
 
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             # media has been properly stored
-            self.assertMediaStored(_id)
+            await self.assertMediaStored(_id)
 
         # compare original and returned data
-        r, s = self.assertMediaField(_id, encoded, clean)
+        r, s = await self.assertMediaField(_id, encoded, clean)
 
         # and of course, the ordinary field has been updated too
         self.assertEqual(r[test_field], test_value)
 
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             # previous media doesn't exist anymore (it's been deleted)
-            self.assertFalse(self.app.media.exists(media_id, self.resource))
+            self.assertFalse(await self.app.media.exists(media_id, self.resource))
 
-    def test_gridfs_media_storage_patch(self):
-        r, s = self._post()
+    async def test_gridfs_media_storage_patch(self):
+        r, s = await self._post()
         _id = r[self.id_field]
         etag = r[ETAG]
 
         # compare original and returned data
-        self.assertMediaField(_id, self.encoded, self.clean)
+        await self.assertMediaField(_id, self.encoded, self.clean)
 
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             # retrieve media_id
-            media_id = self.assertMediaStored(_id)
+            media_id = await self.assertMediaStored(_id)
 
         # PATCH replaces the file with new one
         clean = b"my new file contents"
@@ -209,28 +217,35 @@ class TestGridFSMediaStorage(TestBase):
         data = {"media": (BytesIO(clean), "test.txt"), test_field: test_value}
         headers = [("Content-Type", "multipart/form-data"), ("If-Match", etag)]
 
-        r, s = self.parse_response(
-            self.test_client.patch(
-                ("%s/%s" % (self.url, _id)), data=data, headers=headers
+        r, s = await self.parse_response(
+            await self.test_client.patch(
+                ("%s/%s" % (self.url, _id)),
+                form={test_field: test_value},
+                files={"media": FileStorage(
+                    BytesIO(clean),
+                    filename="test.txt",
+                    content_type="text/plain",
+                )},
+                headers=headers
             )
         )
         self.assertEqual(STATUS_OK, r[STATUS])
 
         # compare original and returned data
-        r, s = self.assertMediaField(_id, encoded, clean)
+        r, s = await self.assertMediaField(_id, encoded, clean)
 
         # and of course, the ordinary field has been updated too
         self.assertEqual(r[test_field], test_value)
 
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             # previous media doesn't exist anymore (it's been deleted)
-            self.assertFalse(self.app.media.exists(media_id, self.resource))
+            self.assertFalse(await self.app.media.exists(media_id, self.resource))
 
-    def test_gridfs_media_storage_patch_null(self):
+    async def test_gridfs_media_storage_patch_null(self):
         # set 'media' field to 'nullable'
         self.domain[self.known_resource]["schema"]["media"]["nullable"] = True
 
-        response, status = self._post()
+        response, status = await self._post()
         self.assert201(status)
 
         _id = response[self.id_field]
@@ -239,54 +254,53 @@ class TestGridFSMediaStorage(TestBase):
         # test that nullable media field can be set to None
         data = {"media": None}
         headers = [("If-Match", etag)]
-        response, status = self.patch(
+        response, status = await self.patch(
             ("%s/%s" % (self.url, _id)), data=data, headers=headers
         )
         self.assert200(status)
 
-        response, status = self.get(self.known_resource, item=_id)
+        response, status = await self.get(self.known_resource, item=_id)
         self.assert200(status)
         self.assertEqual(response["media"], None)
 
-    def test_gridfs_media_storage_delete(self):
-        r, s = self._post()
+    async def test_gridfs_media_storage_delete(self):
+        r, s = await self._post()
         _id = r[self.id_field]
         etag = r[ETAG]
 
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             # retrieve media_id and compare original and returned data
-            self.assertMediaField(_id, self.encoded, self.clean)
+            await self.assertMediaField(_id, self.encoded, self.clean)
 
-            media_id = self.assertMediaStored(_id)
+            media_id = await self.assertMediaStored(_id)
 
         # DELETE deletes both the document and the media file
         headers = [("If-Match", etag)]
 
-        r, s = self.parse_response(
-            self.test_client.delete(("%s/%s" % (self.url, _id)), headers=headers)
+        r, s = await self.parse_response(
+            await self.test_client.delete(("%s/%s" % (self.url, _id)), headers=headers)
         )
         self.assert204(s)
 
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             # media doesn't exist anymore (it's been deleted)
-            self.assertFalse(self.app.media.exists(media_id, self.resource))
+            self.assertFalse(await self.app.media.exists(media_id, self.resource))
 
         # GET returns 404
-        r, s = self.parse_response(self.test_client.get("%s/%s" % (self.url, _id)))
+        r, s = await self.parse_response(await self.test_client.get("%s/%s" % (self.url, _id)))
         self.assert404(s)
 
-    def test_get_media_can_leverage_projection(self):
+    async def test_get_media_can_leverage_projection(self):
         """Test that static projection expose fields other than media
         and client projection on media will work.
         """
         # post a document with *hiding media*
-        r, s = self._post_hide_media()
-
+        r, s = await self._post_hide_media()
         _id = r[self.id_field]
 
         projection = '{"media": 1}'
-        response, status = self.parse_response(
-            self.test_client.get(
+        response, status = await self.parse_response(
+            await self.test_client.get(
                 "%s/%s?projection=%s"
                 % (self.resource_exclude_media_url, _id, projection)
             )
@@ -304,8 +318,8 @@ class TestGridFSMediaStorage(TestBase):
         self.assertTrue(r[self.app.config["LAST_UPDATED"]] != self.epoch)
         self.assertTrue(r[self.app.config["DATE_CREATED"]] != self.epoch)
 
-        response, status = self.parse_response(
-            self.test_client.get("%s/%s" % (self.resource_exclude_media_url, _id))
+        response, status = await self.parse_response(
+            await self.test_client.get("%s/%s" % (self.resource_exclude_media_url, _id))
         )
         self.assert200(status)
 
@@ -320,101 +334,102 @@ class TestGridFSMediaStorage(TestBase):
         self.assertTrue(r[self.app.config["LAST_UPDATED"]] != self.epoch)
         self.assertTrue(r[self.app.config["DATE_CREATED"]] != self.epoch)
 
-    def test_gridfs_media_storage_delete_projection(self):
+    async def test_gridfs_media_storage_delete_projection(self):
         """test that #284 is fixed: If you have a media field, and set
         datasource projection to 0 for that field, the media will not be
         deleted
         """
-        r, s = self._post()
+        r, s = await self._post()
         _id = r[self.id_field]
 
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             # retrieve media_id and compare original and returned data
-            media_id = self.assertMediaStored(_id)
+            media_id = await self.assertMediaStored(_id)
 
         self.app.config["DOMAIN"]["contacts"]["datasource"]["projection"] = {"media": 0}
 
-        r, s = self.parse_response(self.test_client.get("%s/%s" % (self.url, _id)))
+        r, s = await self.parse_response(await self.test_client.get("%s/%s" % (self.url, _id)))
         etag = r[ETAG]
 
         # DELETE deletes both the document and the media file
         headers = [("If-Match", etag)]
 
-        r, s = self.parse_response(
-            self.test_client.delete(("%s/%s" % (self.url, _id)), headers=headers)
+        r, s = await self.parse_response(
+            await self.test_client.delete(("%s/%s" % (self.url, _id)), headers=headers)
         )
         self.assert204(s)
 
-        with self.app.test_request_context():
+        async with self.app.test_request_context(path="/"):
             # media doesn't exist anymore (it's been deleted)
-            self.assertFalse(self.app.media.exists(media_id, self.resource))
+            self.assertFalse(await self.app.media.exists(media_id, self.resource))
 
         # GET returns 404
-        r, s = self.parse_response(self.test_client.get("%s/%s" % (self.url, _id)))
+        r, s = await self.parse_response(await self.test_client.get("%s/%s" % (self.url, _id)))
         self.assert404(s)
 
-    def test_gridfs_media_storage_return_url(self):
+    async def test_gridfs_media_storage_return_url(self):
         self.app._init_media_endpoint()
         self.app.config["RETURN_MEDIA_AS_BASE64_STRING"] = False
         self.app.config["RETURN_MEDIA_AS_URL"] = True
 
-        r, s = self._post()
+        r, s = await self._post()
         self.assertEqual(STATUS_OK, r[STATUS])
         _id = r[self.id_field]
 
         # GET the file at the resource endpoint
         where = 'where={"%s": "%s"}' % (self.id_field, _id)
-        r, s = self.parse_response(self.test_client.get("%s?%s" % (self.url, where)))
+        r, s = await self.parse_response(await self.test_client.get("%s?%s" % (self.url, where)))
         self.assertEqual(len(r["_items"]), 1)
         url = r["_items"][0]["media"]
 
-        with self.app.test_request_context():
-            media_id = self.assertMediaStored(_id)
+        async with self.app.test_request_context(path="/"):
+            media_id = await self.assertMediaStored(_id)
 
         self.assertEqual("/media/%s" % media_id, url)
-        response = self.test_client.get(url)
-        self.assertEqual(self.clean, response.get_data())
+        response = await self.test_client.get(url)
+        r_data = await response.get_data()
+        self.assertEqual(self.clean, r_data)
 
-    def test_gridfs_partial_media(self):
+    async def test_gridfs_partial_media(self):
         self.app._init_media_endpoint()
         self.app.config["RETURN_MEDIA_AS_BASE64_STRING"] = False
         self.app.config["RETURN_MEDIA_AS_URL"] = True
 
-        r, s = self._post()
+        r, s = await self._post()
         _id = r[self.id_field]
         where = 'where={"%s": "%s"}' % (self.id_field, _id)
-        r, s = self.parse_response(self.test_client.get("%s?%s" % (self.url, where)))
+        r, s = await self.parse_response(await self.test_client.get("%s?%s" % (self.url, where)))
         url = r["_items"][0]["media"]
 
         headers = {"Range": "bytes=0-5"}
-        response = self.test_client.get(url, headers=headers)
-        self.assertEqual(self.clean[:6], response.get_data())
+        response = await self.test_client.get(url, headers=headers)
+        self.assertEqual(self.clean[:6], await response.get_data())
         headers = {"Range": "bytes=5-10"}
-        response = self.test_client.get(url, headers=headers)
-        self.assertEqual(self.clean[5:11], response.get_data())
+        response = await self.test_client.get(url, headers=headers)
+        self.assertEqual(self.clean[5:11], await response.get_data())
         headers = {"Range": "bytes=0-999"}
-        response = self.test_client.get(url, headers=headers)
-        self.assertEqual(self.clean, response.get_data())
+        response = await self.test_client.get(url, headers=headers)
+        self.assertEqual(self.clean, await response.get_data())
 
-    def test_gridfs_media_storage_base_url(self):
+    async def test_gridfs_media_storage_base_url(self):
         self.app._init_media_endpoint()
         self.app.config["RETURN_MEDIA_AS_BASE64_STRING"] = False
         self.app.config["RETURN_MEDIA_AS_URL"] = True
         self.app.config["MEDIA_BASE_URL"] = "http://s3-us-west-2.amazonaws.com"
         self.app.config["MEDIA_ENDPOINT"] = "foo"
 
-        r, s = self._post()
+        r, s = await self._post()
         self.assertEqual(STATUS_OK, r[STATUS])
         _id = r[self.id_field]
 
         # GET the file at the resource endpoint
         where = 'where={"%s": "%s"}' % (self.id_field, _id)
-        r, s = self.parse_response(self.test_client.get("%s?%s" % (self.url, where)))
+        r, s = await self.parse_response(await self.test_client.get("%s?%s" % (self.url, where)))
         self.assertEqual(len(r["_items"]), 1)
         url = r["_items"][0]["media"]
 
-        with self.app.test_request_context():
-            media_id = self.assertMediaStored(_id)
+        async with self.app.test_request_context(path="/"):
+            media_id = await self.assertMediaStored(_id)
         self.assertEqual(
             "%s/%s/%s"
             % (
@@ -425,24 +440,24 @@ class TestGridFSMediaStorage(TestBase):
             url,
         )
 
-    def test_media_endpoint_supports_CORS(self):
+    async def test_media_endpoint_supports_CORS(self):
         self.app._init_media_endpoint()
         self.app.config["RETURN_MEDIA_AS_BASE64_STRING"] = False
         self.app.config["RETURN_MEDIA_AS_URL"] = True
         self.app.config["X_DOMAINS"] = "*"
 
-        r, s = self._post()
+        r, s = await self._post()
         self.assertEqual(STATUS_OK, r[STATUS])
         _id = r[self.id_field]
 
-        with self.app.test_request_context():
-            media_id = self.assertMediaStored(_id)
+        async with self.app.test_request_context(path="/"):
+            media_id = await self.assertMediaStored(_id)
 
         methods = ["GET", "OPTIONS"]
         for method in methods:
-            r = self.test_client.get(
+            method_func = getattr(self.test_client, method.lower())
+            r = await method_func(
                 "/media/%s" % media_id,
-                method=method,
                 headers=[("Origin", "http://example.com")],
             )
             self.assert200(r.status_code)
@@ -452,9 +467,9 @@ class TestGridFSMediaStorage(TestBase):
             self.assertEqual(r.headers["Vary"], "Origin")
             self.assertTrue(method in r.headers["Access-Control-Allow-Methods"])
 
-    def assertMediaField(self, _id, encoded, clean):
+    async def assertMediaField(self, _id, encoded, clean):
         # GET the file at the item endpoint
-        r, s = self.parse_response(self.test_client.get("%s/%s" % (self.url, _id)))
+        r, s = await self.parse_response(await self.test_client.get("%s/%s" % (self.url, _id)))
         returned = r["media"]
         # returned value is a base64 encoded string
         self.assertEqual(returned, encoded)
@@ -462,9 +477,9 @@ class TestGridFSMediaStorage(TestBase):
         self.assertEqual(base64.b64decode(returned.encode()), clean)
         return r, s
 
-    def assertMediaFieldExtended(self, _id, encoded, clean):
+    async def assertMediaFieldExtended(self, _id, encoded, clean):
         # GET the file at the item endpoint
-        r, s = self.parse_response(self.test_client.get("%s/%s" % (self.url, _id)))
+        r, s = await self.parse_response(await self.test_client.get("%s/%s" % (self.url, _id)))
         returned = r["media"]["file"]
         # returned value is a base64 encoded string
         self.assertEqual(returned, encoded)
@@ -472,34 +487,54 @@ class TestGridFSMediaStorage(TestBase):
         self.assertEqual(base64.b64decode(returned.encode()), clean)
         return r, s
 
-    def assertMediaStored(self, _id):
+    async def assertMediaStored(self, _id):
         _db = self.connection[MONGO_DBNAME]
 
         # retrieve media id
-        media_id = _db.contacts.find_one({self.id_field: ObjectId(_id)})["media"]
+        media_id = (await _db.contacts.find_one({self.id_field: ObjectId(_id)}))["media"]
 
         # verify it's actually stored in the media storage system
-        self.assertTrue(self.app.media.exists(media_id, self.resource))
+        self.assertTrue(await self.app.media.exists(media_id, self.resource))
         return media_id
 
-    def _post(self):
+    async def _post(self):
         # send a file and a required, ordinary field with no issues
         data = {
-            "media": (BytesIO(self.clean), "test.txt"),
             self.test_field: self.test_value,
         }
-        return self.parse_response(
-            self.test_client.post(self.url, data=data, headers=self.headers)
+
+        return await self.parse_response(
+            await self.test_client.post(
+                self.url,
+                form=data,
+                headers=self.headers,
+                files={"media": FileStorage(
+                    BytesIO(self.clean),
+                    filename="media",
+                    content_type="text/plain",
+                )},
+            )
         )
 
-    def _post_hide_media(self):
+        return await self.parse_response(
+            await self.test_client.post(self.url, data=data, headers=self.headers)
+        )
+
+    async def _post_hide_media(self):
         # send a file and a required, ordinary field with no issues
         data = {
-            "media": (BytesIO(self.clean), "test.txt"),
-            self.test_field: self.test_value,
+            self.test_field: self.test_value
         }
-        return self.parse_response(
-            self.test_client.post(
-                self.resource_exclude_media_url, data=data, headers=self.headers
+
+        return await self.parse_response(
+            await self.test_client.post(
+                self.resource_exclude_media_url,
+                files={"media": FileStorage(
+                    BytesIO(self.clean),
+                    filename="media",
+                    content_type="plain/text"
+                )},
+                form=data,
+                headers=self.headers
             )
         )

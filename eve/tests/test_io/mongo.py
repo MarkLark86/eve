@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime
-from unittest import TestCase
+from unittest import TestCase, IsolatedAsyncioTestCase
 
 import simplejson as json
 from bson import ObjectId, decimal128
 from bson.dbref import DBRef
-from cerberus import SchemaError
+from cerberus.validator import SchemaError
 
 from eve.io.mongo import Mongo, MongoJSONEncoder, Validator
 from eve.io.mongo.parser import ParseError, parse
@@ -81,7 +81,7 @@ class TestPythonParser(TestCase):
         self.assertRaises(ParseError, parse, "a | 2")
 
 
-class TestMongoValidator(TestCase):
+class TestMongoValidator(IsolatedAsyncioTestCase):
     def test_unique_fail(self):
         """relying on POST and PATCH tests since we don't have an active
         app_context running here"""
@@ -92,105 +92,107 @@ class TestMongoValidator(TestCase):
         app_context running here"""
         pass
 
-    def test_decimal_fail(self):
+    async def test_decimal_fail(self):
         schema = {"decimal": {"type": "decimal"}}
         doc = {"decimal": "not_a_decimal"}
         v = Validator(schema, None)
-        self.assertFalse(v.validate(doc))
+        self.assertFalse(await v.validate(doc))
         self.assertTrue("decimal" in v.errors)
         self.assertTrue("decimal" in v.errors["decimal"])
 
-    def test_decimal_success(self):
+    async def test_decimal_success(self):
         schema = {"decimal": {"type": "decimal"}}
         doc = {"decimal": decimal128.Decimal128("123.123")}
         v = Validator(schema, None)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
-    def test_objectid_fail(self):
+    async def test_objectid_fail(self):
         schema = {"id": {"type": "objectid"}}
         doc = {"id": "not_an_object_id"}
         v = Validator(schema, None)
-        self.assertFalse(v.validate(doc))
+        self.assertFalse(await v.validate(doc))
         self.assertTrue("id" in v.errors)
         self.assertTrue("objectid" in v.errors["id"])
 
-    def test_objectid_success(self):
+    async def test_objectid_success(self):
         schema = {"id": {"type": "objectid"}}
         doc = {"id": ObjectId("50656e4538345b39dd0414f0")}
         v = Validator(schema, None)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
-    def test_dbref_fail(self):
+    async def test_dbref_fail(self):
         schema = {"id": {"type": "dbref"}}
         doc = {"id": "not_an_object_id"}
         v = Validator(schema, None)
-        self.assertFalse(v.validate(doc))
+        self.assertFalse(await v.validate(doc))
         self.assertTrue("id" in v.errors)
         self.assertTrue("dbref" in v.errors["id"])
 
-    def test_dbref_success(self):
+    async def test_dbref_success(self):
         schema = {"id": {"type": "dbref"}}
         doc = {"id": DBRef("SomeCollection", ObjectId("50656e4538345b39dd0414f0"))}
         v = Validator(schema, None)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
-    def test_reject_invalid_schema(self):
+    async def test_reject_invalid_schema(self):
         schema = {"a_field": {"foo": "bar"}}
-        self.assertRaises(SchemaError, lambda: Validator(schema))
+        with self.assertRaises(SchemaError):
+            v = Validator(schema)
+            await v.init()
 
-    def test_geojson_not_compilant(self):
+    async def test_geojson_not_compilant(self):
         schema = {"location": {"type": "point"}}
         doc = {"location": [10.0, 123.0]}
         v = Validator(schema)
-        self.assertFalse(v.validate(doc))
+        self.assertFalse(await v.validate(doc))
         self.assertTrue("location" in v.errors)
         self.assertTrue("point" in v.errors["location"])
 
-    def test_geometry_not_compilant(self):
+    async def test_geometry_not_compilant(self):
         schema = {"location": {"type": "point"}}
         doc = {"location": {"type": "Point", "geometries": [10.0, 123.0]}}
         v = Validator(schema)
-        self.assertFalse(v.validate(doc))
+        self.assertFalse(await v.validate(doc))
         self.assertTrue("location" in v.errors)
         self.assertTrue("point" in v.errors["location"])
 
-    def test_geometrycollection_not_compilant(self):
+    async def test_geometrycollection_not_compilant(self):
         schema = {"location": {"type": "geometrycollection"}}
         doc = {"location": {"type": "GeometryCollection", "coordinates": [10.0, 123.0]}}
         v = Validator(schema)
-        self.assertFalse(v.validate(doc))
+        self.assertFalse(await v.validate(doc))
         self.assertTrue("location" in v.errors)
         self.assertTrue("geometrycollection" in v.errors["location"])
 
-    def test_point_success(self):
+    async def test_point_success(self):
         schema = {"location": {"type": "point"}}
         doc = {"location": {"type": "Point", "coordinates": [100.0, 0.0]}}
         v = Validator(schema)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
-    def test_point_fail(self):
+    async def test_point_fail(self):
         schema = {"location": {"type": "point"}}
         doc = {"location": {"type": "Point", "coordinates": ["asdasd", 123.0]}}
         v = Validator(schema)
-        self.assertFalse(v.validate(doc))
+        self.assertFalse(await v.validate(doc))
         self.assertTrue("location" in v.errors)
         self.assertTrue("point" in v.errors["location"])
 
-    def test_point_coordinates_fail(self):
+    async def test_point_coordinates_fail(self):
         schema = {"location": {"type": "point"}}
         doc = {"location": {"type": "Point", "coordinates": [123.0]}}
         v = Validator(schema)
-        self.assertFalse(v.validate(doc))
+        self.assertFalse(await v.validate(doc))
         self.assertTrue("location" in v.errors)
         self.assertTrue("point" in v.errors["location"])
 
-    def test_point_integer_success(self):
+    async def test_point_integer_success(self):
         schema = {"location": {"type": "point"}}
         doc = {"location": {"type": "Point", "coordinates": [10, 123.0]}}
         v = Validator(schema)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
-    def test_linestring_success(self):
+    async def test_linestring_success(self):
         schema = {"location": {"type": "linestring"}}
         doc = {
             "location": {
@@ -199,9 +201,9 @@ class TestMongoValidator(TestCase):
             }
         }
         v = Validator(schema)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
-    def test_linestring_fail(self):
+    async def test_linestring_fail(self):
         schema = {"location": {"type": "linestring"}}
         doc = {
             "location": {
@@ -210,11 +212,11 @@ class TestMongoValidator(TestCase):
             }
         }
         v = Validator(schema)
-        self.assertFalse(v.validate(doc))
+        self.assertFalse(await v.validate(doc))
         self.assertTrue("location" in v.errors)
         self.assertTrue("linestring" in v.errors["location"])
 
-    def test_polygon_success(self):
+    async def test_polygon_success(self):
         schema = {"location": {"type": "polygon"}}
         doc = {
             "location": {
@@ -231,9 +233,9 @@ class TestMongoValidator(TestCase):
             }
         }
         v = Validator(schema)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
-    def test_polygon_fail(self):
+    async def test_polygon_fail(self):
         schema = {"location": {"type": "polygon"}}
         doc = {
             "location": {
@@ -242,11 +244,11 @@ class TestMongoValidator(TestCase):
             }
         }
         v = Validator(schema)
-        self.assertFalse(v.validate(doc))
+        self.assertFalse(await v.validate(doc))
         self.assertTrue("location" in v.errors)
         self.assertTrue("polygon" in v.errors["location"])
 
-    def test_multipoint_success(self):
+    async def test_multipoint_success(self):
         schema = {"location": {"type": "multipoint"}}
         doc = {
             "location": {
@@ -255,9 +257,9 @@ class TestMongoValidator(TestCase):
             }
         }
         v = Validator(schema)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
-    def test_multilinestring_success(self):
+    async def test_multilinestring_success(self):
         schema = {"location": {"type": "multilinestring"}}
         doc = {
             "location": {
@@ -269,9 +271,9 @@ class TestMongoValidator(TestCase):
             }
         }
         v = Validator(schema)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
-    def test_multipolygon_success(self):
+    async def test_multipolygon_success(self):
         schema = {"location": {"type": "multipolygon"}}
         doc = {
             "location": {
@@ -306,9 +308,9 @@ class TestMongoValidator(TestCase):
             }
         }
         v = Validator(schema)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
-    def test_geometrycollection_success(self):
+    async def test_geometrycollection_success(self):
         schema = {"locations": {"type": "geometrycollection"}}
         doc = {
             "locations": {
@@ -320,9 +322,9 @@ class TestMongoValidator(TestCase):
             }
         }
         v = Validator(schema)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
-    def test_geometrycollection_fail(self):
+    async def test_geometrycollection_fail(self):
         schema = {"locations": {"type": "geometrycollection"}}
         doc = {
             "locations": {
@@ -331,11 +333,11 @@ class TestMongoValidator(TestCase):
             }
         }
         v = Validator(schema)
-        self.assertFalse(v.validate(doc))
+        self.assertFalse(await v.validate(doc))
         self.assertTrue("locations" in v.errors)
         self.assertTrue("geometrycollection" in v.errors["locations"])
 
-    def test_feature_success(self):
+    async def test_feature_success(self):
         schema = {"locations": {"type": "feature"}}
         doc = {
             "locations": {
@@ -355,9 +357,9 @@ class TestMongoValidator(TestCase):
             }
         }
         v = Validator(schema)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
-    def test_feature_fail(self):
+    async def test_feature_fail(self):
         schema = {"locations": {"type": "feature"}}
         doc = {
             "locations": {
@@ -373,11 +375,11 @@ class TestMongoValidator(TestCase):
             }
         }
         v = Validator(schema)
-        self.assertFalse(v.validate(doc))
+        self.assertFalse(await v.validate(doc))
         self.assertTrue("locations" in v.errors)
         self.assertTrue("feature" in v.errors["locations"])
 
-    def test_featurecollection_success(self):
+    async def test_featurecollection_success(self):
         schema = {"locations": {"type": "featurecollection"}}
         doc = {
             "locations": {
@@ -391,9 +393,9 @@ class TestMongoValidator(TestCase):
             }
         }
         v = Validator(schema)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
-    def test_featurecollection_fail(self):
+    async def test_featurecollection_fail(self):
         schema = {"locations": {"type": "featurecollection"}}
         doc = {
             "locations": {
@@ -402,11 +404,11 @@ class TestMongoValidator(TestCase):
             }
         }
         v = Validator(schema)
-        self.assertFalse(v.validate(doc))
+        self.assertFalse(await v.validate(doc))
         self.assertTrue("locations" in v.errors)
         self.assertTrue("featurecollection" in v.errors["locations"])
 
-    def test_dependencies_with_defaults(self):
+    async def test_dependencies_with_defaults(self):
         schema = {
             "test_field": {"dependencies": "foo"},
             "foo": {"type": "string", "default": "foo"},
@@ -416,17 +418,17 @@ class TestMongoValidator(TestCase):
 
         # With `dependencies` as a str
         v = Validator(schema)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
         # With `dependencies` as a dict
         schema["test_field"] = {"dependencies": {"foo": "foo", "bar": "bar"}}
         v = Validator(schema)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
         # With `dependencies` as a list
         schema["test_field"] = {"dependencies": ["foo", "bar"]}
         v = Validator(schema)
-        self.assertTrue(v.validate(doc))
+        self.assertTrue(await v.validate(doc))
 
 
 class TestMongoDriver(TestBase):
@@ -475,10 +477,10 @@ class TestMongoDriver(TestBase):
         self.assertTrue(mongo.query_contains_field(compound_query, "_id"))
         self.assertFalse(mongo.query_contains_field(compound_query, "fake-field"))
 
-    def test_delete_returns_status(self):
+    async def test_delete_returns_status(self):
         db = self.connection[MONGO_DBNAME]
-        count = db.contacts.count_documents({})
-        result = db.contacts.delete_many({})
+        count = await db.contacts.count_documents({})
+        result = await db.contacts.delete_many({})
         self.assertEqual(count, result.deleted_count)
         self.assertEqual(True, result.acknowledged)
         self.connection.close()

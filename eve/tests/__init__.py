@@ -8,7 +8,8 @@ from datetime import datetime, timedelta, timezone
 
 import simplejson as json
 from bson import ObjectId
-from pymongo import MongoClient
+from motor.motor_asyncio import AsyncIOMotorClient
+from quart.utils import is_coroutine_function
 
 import eve
 from eve import ETAG, ISSUES
@@ -70,15 +71,15 @@ def setup_add_url_rule(app, original_add_url_rule):
     return wrapped_add_url_rule
 
 
-class TestMinimal(unittest.TestCase):
+class TestMinimal(unittest.IsolatedAsyncioTestCase):
     """Start the building of the tests for an application
     based on Eve by subclassing this class and provide proper settings
-    using :func:`setUp()`
+    using :func:`asyncSetUp()`
     """
 
     app = ValueStack(close_pymongo_connection)
 
-    def setUp(self, settings_file=None, url_converters=None):
+    async def asyncSetUp(self, settings_file=None, url_converters=None):
         """Prepare the test fixture
 
         :param settings_file: the name of the settings file.  Defaults
@@ -91,18 +92,19 @@ class TestMinimal(unittest.TestCase):
 
         self.connection = None
         self.known_resource_count = 101
-        self.setupDB()
+        await self.setupDB()
 
         self.settings_file = settings_file
         self.app = eve.Eve(settings=self.settings_file, url_converters=url_converters)
+        await self.app.init_resources()
 
         self.test_client = self.app.test_client()
 
         self.domain = self.app.config["DOMAIN"]
 
-    def tearDown(self):
+    async def asyncTearDown(self):
         del self.app
-        self.dropDB()
+        await self.dropDB()
 
     def assert200(self, status):
         self.assertEqual(status, 200)
@@ -125,7 +127,7 @@ class TestMinimal(unittest.TestCase):
     def assert422(self, status):
         self.assertEqual(status, 422)
 
-    def get(self, resource, query="", item=None):
+    async def get(self, resource, query="", item=None):
         if resource in self.domain:
             resource = self.domain[resource]["url"]
         if item:
@@ -133,37 +135,37 @@ class TestMinimal(unittest.TestCase):
         else:
             request = "/%s%s" % (resource, query)
 
-        r = self.test_client.get(request)
-        return self.parse_response(r)
+        r = await self.test_client.get(request)
+        return await self.parse_response(r)
 
-    def post(self, url, data, headers=None, content_type="application/json"):
+    async def post(self, url, data, headers=None, content_type="application/json"):
         if headers is None:
             headers = []
         headers.append(("Content-Type", content_type))
-        r = self.test_client.post(url, data=json.dumps(data), headers=headers)
-        return self.parse_response(r)
+        r = await self.test_client.post(url, json=data, headers=headers)
+        return await self.parse_response(r)
 
-    def put(self, url, data, headers=None):
+    async def put(self, url, data, headers=None):
         if headers is None:
             headers = []
         headers.append(("Content-Type", "application/json"))
-        r = self.test_client.put(url, data=json.dumps(data), headers=headers)
-        return self.parse_response(r)
+        r = await self.test_client.put(url, json=data, headers=headers)
+        return await self.parse_response(r)
 
-    def patch(self, url, data, headers=None):
+    async def patch(self, url, data, headers=None):
         if headers is None:
             headers = []
         headers.append(("Content-Type", "application/json"))
-        r = self.test_client.patch(url, data=json.dumps(data), headers=headers)
-        return self.parse_response(r)
+        r = await self.test_client.patch(url, json=data, headers=headers)
+        return await self.parse_response(r)
 
-    def delete(self, url, headers=None):
-        r = self.test_client.delete(url, headers=headers)
-        return self.parse_response(r)
+    async def delete(self, url, headers=None):
+        r = await self.test_client.delete(url, headers=headers)
+        return await self.parse_response(r)
 
-    def parse_response(self, r):
+    async def parse_response(self, r):
         try:
-            v = json.loads(r.get_data())
+            v = json.loads(await r.get_data())
         except json.JSONDecodeError:
             v = None
         return v, r.status_code
@@ -182,16 +184,16 @@ class TestMinimal(unittest.TestCase):
             self.assertTrue(k in issues)
             self.assertTrue(v in issues[k])
 
-    def assertExpires(self, resource):
+    async def assertExpires(self, resource):
         # TODO if we ever get access to response.date (it is None), compare
         # it with Expires
-        r = self.test_client.get(resource)
+        r = await self.test_client.get(resource)
 
         expires = r.headers.get("Expires")
         self.assertTrue(expires is not None)
 
-    def assertCacheControl(self, resource):
-        r = self.test_client.get(resource)
+    async def assertCacheControl(self, resource):
+        r = await self.test_client.get(resource)
 
         cache_control = r.headers.get("Cache-Control")
         self.assertTrue(cache_control is not None)
@@ -199,16 +201,16 @@ class TestMinimal(unittest.TestCase):
             cache_control, self.domain[self.known_resource]["cache_control"]
         )
 
-    def assertIfModifiedSince(self, resource):
-        r = self.test_client.get(resource)
+    async def assertIfModifiedSince(self, resource):
+        r = await self.test_client.get(resource)
 
         last_modified = r.headers.get("Last-Modified")
         self.assertTrue(last_modified is not None)
-        r = self.test_client.get(
+        r = await self.test_client.get(
             resource, headers=[("If-Modified-Since", last_modified)]
         )
         self.assert304(r.status_code)
-        self.assertTrue(not r.get_data())
+        self.assertTrue(not (await r.get_data()))
 
     def assertItem(self, item, resource):
         self.assertEqual(type(item), dict)
@@ -365,33 +367,36 @@ class TestMinimal(unittest.TestCase):
     def assert500(self, status):
         self.assertEqual(status, 500)
 
-    def setupDB(self):
-        self.connection = MongoClient(
+    async def setupDB(self):
+        self.connection = AsyncIOMotorClient(
             MONGO_HOST, MONGO_PORT, uuidRepresentation="standard"
         )
-        self.connection.drop_database(MONGO_DBNAME)
+        await self.connection.drop_database(MONGO_DBNAME)
         if MONGO_USERNAME:
             db = self.connection[MONGO_DBNAME]
-            info = db.command("usersInfo", MONGO_USERNAME)
+            info = await db.command("usersInfo", MONGO_USERNAME)
             if any(user["user"] == MONGO_USERNAME for user in info["users"]):
-                db.command("dropUser", MONGO_USERNAME)
-            db.command(
+                await db.command("dropUser", MONGO_USERNAME)
+            await db.command(
                 "createUser", MONGO_USERNAME, pwd=MONGO_PASSWORD, roles=["dbAdmin"]
             )
-        self.bulk_insert()
+        if is_coroutine_function(self.bulk_insert):
+            await self.bulk_insert()
+        else:
+            self.bulk_insert()
 
     def bulk_insert(self):
         pass
 
-    def dropDB(self):
-        self.connection = MongoClient(MONGO_HOST, MONGO_PORT)
-        self.connection.drop_database(MONGO_DBNAME)
+    async def dropDB(self):
+        self.connection = AsyncIOMotorClient(MONGO_HOST, MONGO_PORT)
+        await self.connection.drop_database(MONGO_DBNAME)
         self.connection.close()
 
 
 class TestBase(TestMinimal):
-    def setUp(self, url_converters=None):
-        super().setUp(url_converters=url_converters)
+    async def asyncSetUp(self, url_converters=None):
+        await super().asyncSetUp(url_converters=url_converters)
 
         self.disabled_bulk = "disabled_bulk"
         self.disabled_bulk_url = "/%s" % self.domain[self.disabled_bulk]["url"]
@@ -433,7 +438,7 @@ class TestBase(TestMinimal):
             "/%s" % self.domain[self.resource_exclude_media]["url"]
         )
 
-        response, _ = self.get("contacts", "?max_results=2")
+        response, _ = await self.get("contacts", "?max_results=2")
         contact = self.response_item(response)
         self.item = contact
         self.item_id = contact[self.domain["contacts"]["id_field"]]
@@ -452,11 +457,11 @@ class TestBase(TestMinimal):
         )
         self.alt_ref = self.response_item(response, 1)["ref"]
 
-        response, _ = self.get("payments", "?max_results=1")
+        response, _ = await self.get("payments", "?max_results=1")
         self.readonly_id = self.response_item(response)["_id"]
         self.readonly_id_url = "%s/%s" % (self.readonly_resource_url, self.readonly_id)
 
-        response, _ = self.get("users")
+        response, _ = await self.get("users")
         user = self.response_item(response)
         self.user_id = user[self.domain["users"]["id_field"]]
         self.user_username = user["username"]
@@ -471,7 +476,7 @@ class TestBase(TestMinimal):
             self.user_username,
         )
 
-        response, _ = self.get("invoices")
+        response, _ = await self.get("invoices")
         invoice = self.response_item(response)
         self.invoice_id = invoice[self.domain["invoices"]["id_field"]]
         self.invoice_etag = invoice[ETAG]
@@ -492,6 +497,7 @@ class TestBase(TestMinimal):
         self.test_patch_url = "/%s" % self.domain[self.test_patch]["url"]
 
         self.app.add_url_rule = setup_add_url_rule(self.app, self.app.add_url_rule)
+        self.app._got_first_request = False
 
     def response_item(self, response, i=0):
         if self.app.config["HATEOAS"]:
@@ -623,12 +629,12 @@ class TestBase(TestMinimal):
             products[counter]["parent_product"] = sku
         return products
 
-    def bulk_insert(self):
+    async def bulk_insert(self):
         _db = self.connection[MONGO_DBNAME]
-        _db.contacts.insert_many(self.random_contacts(self.known_resource_count))
-        _db.contacts.insert_many(self.random_users(2))
-        _db.payments.insert_many(self.random_payments(10))
-        _db.invoices.insert_many(self.random_invoices(1))
-        _db.internal_transactions.insert_many(self.random_internal_transactions(4))
+        await _db.contacts.insert_many(self.random_contacts(self.known_resource_count))
+        await _db.contacts.insert_many(self.random_users(2))
+        await _db.payments.insert_many(self.random_payments(10))
+        await _db.invoices.insert_many(self.random_invoices(1))
+        await _db.internal_transactions.insert_many(self.random_internal_transactions(4))
         products = self.generate_products()
-        _db.products.insert_many(products)
+        await _db.products.insert_many(products)

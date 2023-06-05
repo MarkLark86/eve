@@ -34,7 +34,7 @@ class TestConfig(TestBase):
 
     def test_custom_kwargs(self):
         self.app = Eve("unittest", static_folder="static/", settings=self.settings_file)
-        self.assertTrue(self.app.static_folder.endswith("static"))
+        self.assertTrue(str(self.app.static_folder).endswith("static"))
 
     def test_regexconverter(self):
         regex_converter = self.app.url_map.converters.get("regex")
@@ -391,7 +391,7 @@ class TestConfig(TestBase):
             # TODO test item endpoints as well. gonna be tricky since
             # we have to reverse regexes here. will be fun.
 
-    def test_register_resource(self):
+    async def test_register_resource(self):
         resource = "resource"
         settings = {
             "schema": {
@@ -399,28 +399,26 @@ class TestConfig(TestBase):
                 "price": {"type": "integer", "default": 100},
             }
         }
-        self.app.register_resource(resource, settings)
+        await self.app.register_resource(resource, settings)
         self._test_defaults_for_resource(resource)
         self._test_datasource_for_resource(resource)
         self.test_validate_roles()
 
-    def test_auth_field_as_idfield(self):
+    async def test_auth_field_as_idfield(self):
         resource = "resource"
         settings = {"auth_field": self.app.config["ID_FIELD"]}
-        self.assertRaises(
-            ConfigException, self.app.register_resource, resource, settings
-        )
+        with self.assertRaises(ConfigException):
+            await self.app.register_resource(resource, settings)
 
-    def test_auth_field_as_custom_idfield(self):
+    async def test_auth_field_as_custom_idfield(self):
         resource = "resource"
         settings = {
             "schema": {"id": {"type": "string"}},
             "id_field": "id",
             "auth_field": "id",
         }
-        self.assertRaises(
-            ConfigException, self.app.register_resource, resource, settings
-        )
+        with self.assertRaises(ConfigException):
+            await self.app.register_resource(resource, settings)
 
     def test_oplog_config(self):
 
@@ -465,7 +463,7 @@ class TestConfig(TestBase):
         self.assertEqual(settings["url"], endpoint)
         self.assertEqual(settings["datasource"]["source"], key)
 
-    def test_create_indexes(self):
+    async def test_create_indexes(self):
         # prepare a specific schema with mongo indexes declared
         # along with the schema.
         settings = {
@@ -481,7 +479,7 @@ class TestConfig(TestBase):
                 "arguments": ([("lat_long", "2d")], {"sparse": True}),
             },
         }
-        self.app.register_resource("mongodb_features", settings)
+        await self.app.register_resource("mongodb_features", settings)
 
         # check that the indexes are there as a part of the resource
         # settings
@@ -491,13 +489,13 @@ class TestConfig(TestBase):
         )
 
         # check that the indexes were created
-        from pymongo import MongoClient
+        from motor.motor_asyncio import AsyncIOMotorClient
 
         db_name = self.app.config["MONGO_DBNAME"]
 
-        db = MongoClient(host=MONGO_HOST, port=MONGO_PORT)[db_name]
+        db = AsyncIOMotorClient(host=MONGO_HOST, port=MONGO_PORT)[db_name]
         for coll in [db["mongodb_features"], db["mongodb_features_versions"]]:
-            indexes = coll.index_information()
+            indexes = await coll.index_information()
 
             # at least there is an index for the _id field plus the indexes
             # created by the resource of this test
@@ -530,7 +528,7 @@ class TestConfig(TestBase):
         challenge = lambda code: self.assertTrue(code in handlers)  # noqa
         map(challenge, codes)
 
-    def test_mongodb_settings(self):
+    async def test_mongodb_settings(self):
         # Create custom app with mongodb settings.
         settings = {"DOMAIN": {"contacts": {}}, "MONGO_OPTIONS": {"connect": False}}
         app = Eve(settings=settings)
@@ -543,7 +541,7 @@ class TestConfig(TestBase):
             "schema": {"name": {"type": "string"}},
             "MONGO_OPTIONS": {"connect": False},
         }
-        self.app.register_resource("mongodb_settings", settings)
+        await self.app.register_resource("mongodb_settings", settings)
         # check that settings are set.
         resource_settings = self.app.config["DOMAIN"]["mongodb_settings"]
         self.assertEqual(resource_settings["MONGO_OPTIONS"], settings["MONGO_OPTIONS"])

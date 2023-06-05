@@ -1,3 +1,4 @@
+import pytest
 import time
 from collections import OrderedDict  # noqa
 from datetime import datetime
@@ -17,7 +18,7 @@ from eve.utils import config
 
 
 class TestSerializer(TestBase):
-    def test_serialize_array_of_tipes(self):
+    async def test_serialize_array_of_tipes(self):
         # see #1112.
         schema = {
             "val": {
@@ -30,18 +31,18 @@ class TestSerializer(TestBase):
         }
 
         doc = {"val": {"x": "1", "timestamp": "Tue, 06 Nov 2012 10:33:31 GMT"}}
-        with self.app.app_context():
+        async with self.app.app_context():
             serialized = serialize(doc, schema=schema)
         self.assertEqual(serialized["val"]["x"], 1)
         self.assertTrue(isinstance(serialized["val"]["timestamp"], datetime))
 
         doc = {"val": {"x": "s", "timestamp": "Tue, 06 Nov 2012 10:33:31 GMT"}}
-        with self.app.app_context():
+        async with self.app.app_context():
             serialized = serialize(doc, schema=schema)
         self.assertEqual(serialized["val"]["x"], "s")
         self.assertTrue(isinstance(serialized["val"]["timestamp"], datetime))
 
-    def test_serialize_subdocument(self):
+    async def test_serialize_subdocument(self):
         # tests fix for #244, serialization of sub-documents.
         schema = {
             "personal": {
@@ -60,12 +61,12 @@ class TestSerializer(TestBase):
             },
             "without_type": "foo",
         }
-        with self.app.app_context():
+        async with self.app.app_context():
             serialized = serialize(doc, schema=schema)
         self.assertTrue(isinstance(serialized["personal"]["best_friend"], ObjectId))
         self.assertTrue(isinstance(serialized["personal"]["born"], datetime))
 
-    def test_mongo_serializes(self):
+    async def test_mongo_serializes(self):
         schema = {
             "id": {"type": "objectid"},
             "date": {"type": "datetime"},
@@ -76,7 +77,7 @@ class TestSerializer(TestBase):
             "decobjstring": {"type": "decimal"},
             "decobjnumber": {"type": "decimal"},
         }
-        with self.app.app_context():
+        async with self.app.app_context():
             # Success
             res = serialize(
                 {
@@ -109,14 +110,14 @@ class TestSerializer(TestBase):
             self.assertTrue(isinstance(res["decobjstring"], decimal128.Decimal128))
             self.assertTrue(isinstance(res["decobjnumber"], decimal128.Decimal128))
 
-    def test_non_blocking_on_simple_field_serialization_exception(self):
+    async def test_non_blocking_on_simple_field_serialization_exception(self):
         schema = {
             "extract_time": {"type": "datetime"},
             "date": {"type": "datetime"},
             "total": {"type": "integer"},
         }
 
-        with self.app.app_context():
+        async with self.app.app_context():
             # Success
             res = serialize(
                 {
@@ -132,7 +133,7 @@ class TestSerializer(TestBase):
             self.assertTrue(isinstance(res["extract_time"], datetime))
             self.assertTrue(isinstance(res["date"], datetime))
 
-    def test_serialize_lists_of_lists(self):
+    async def test_serialize_lists_of_lists(self):
         # serialize should handle list of lists of basic types
         schema = {
             "l_of_l": {
@@ -147,7 +148,7 @@ class TestSerializer(TestBase):
             ]
         }
 
-        with self.app.app_context():
+        async with self.app.app_context():
             serialized = serialize(doc, schema=schema)
         for sublist in serialized["l_of_l"]:
             for item in sublist:
@@ -175,13 +176,13 @@ class TestSerializer(TestBase):
                 ],
             ]
         }
-        with self.app.app_context():
+        async with self.app.app_context():
             serialized = serialize(doc, schema=schema)
         for sublist in serialized["l_of_l"]:
             for item in sublist:
                 self.assertTrue(isinstance(item["_id"], ObjectId))
 
-    def test_dbref_serialize_lists_of_lists(self):
+    async def test_dbref_serialize_lists_of_lists(self):
         # serialize should handle list of lists of basic types
         schema = {
             "l_of_l": {
@@ -202,7 +203,7 @@ class TestSerializer(TestBase):
             ]
         }
 
-        with self.app.app_context():
+        async with self.app.app_context():
             serialized = serialize(doc, schema=schema)
         for sublist in serialized["l_of_l"]:
             for item in sublist:
@@ -250,13 +251,13 @@ class TestSerializer(TestBase):
                 ],
             ]
         }
-        with self.app.app_context():
+        async with self.app.app_context():
             serialized = serialize(doc, schema=schema)
         for sublist in serialized["l_of_l"]:
             for item in sublist:
                 self.assertTrue(isinstance(item["_id"], DBRef))
 
-    def test_serialize_null_dictionary(self):
+    async def test_serialize_null_dictionary(self):
         # Serialization should continue after encountering a null value dict
         # field. Field may be nullable, or error will be caught in validation.
         schema = {
@@ -267,7 +268,7 @@ class TestSerializer(TestBase):
             }
         }
         doc = {"nullable_dict": None}
-        with self.app.app_context():
+        async with self.app.app_context():
             try:
                 serialize(doc, schema=schema)
             except Exception:
@@ -276,7 +277,7 @@ class TestSerializer(TestBase):
                     "Serializing null dictionaries should " "not raise an exception.",
                 )
 
-    def test_serialize_null_list(self):
+    async def test_serialize_null_list(self):
         schema = {
             "nullable_list": {
                 "type": "list",
@@ -285,7 +286,7 @@ class TestSerializer(TestBase):
             }
         }
         doc = {"nullable_list": None}
-        with self.app.app_context():
+        async with self.app.app_context():
             try:
                 serialize(doc, schema=schema)
             except Exception:
@@ -299,38 +300,38 @@ class TestSerializer(TestBase):
             }
         }
         doc = {"nullable_list": None}
-        with self.app.app_context():
+        async with self.app.app_context():
             try:
                 serialize(doc, schema=schema)
             except Exception:
                 self.fail("Serializing null lists" " should not raise an exception")
 
-    def test_serialize_number(self):
+    async def test_serialize_number(self):
         schema = {"anumber": {"type": "number"}}
         for expected_type, value in [(int, "35"), (float, "3.5")]:
             doc = {"anumber": value}
-            with self.app.app_context():
+            async with self.app.app_context():
                 serialized = serialize(doc, schema=schema)
                 self.assertTrue(isinstance(serialized["anumber"], expected_type))
 
-    def test_serialize_boolean(self):
+    async def test_serialize_boolean(self):
         schema = {"bool": {"type": "boolean"}}
 
-        with self.app.app_context():
+        async with self.app.app_context():
             for val in [1, "1", 0, "0", "true", "True", "false", "False"]:
                 doc = {"bool": val}
                 serialized = serialize(doc, schema=schema)
                 self.assertTrue(isinstance(serialized["bool"], bool))
 
-    def test_serialize_inside_x_of_rules(self):
+    async def test_serialize_inside_x_of_rules(self):
         for x_of in ["allof", "anyof", "oneof", "noneof"]:
             schema = {"x_of-field": {x_of: [{"type": "objectid"}, {"required": True}]}}
             doc = {"x_of-field": "50656e4538345b39dd0414f0"}
-            with self.app.app_context():
+            async with self.app.app_context():
                 serialized = serialize(doc, schema=schema)
                 self.assertTrue(isinstance(serialized["x_of-field"], ObjectId))
 
-    def test_serialize_alongside_x_of_rules(self):
+    async def test_serialize_alongside_x_of_rules(self):
         for x_of in ["allof", "anyof", "oneof", "noneof"]:
             schema = OrderedDict(
                 [
@@ -344,12 +345,12 @@ class TestSerializer(TestBase):
                     ("oid-field", "50656e4538345b39dd0414f0"),
                 ]
             )
-            with self.app.app_context():
+            async with self.app.app_context():
                 serialized = serialize(doc, schema=schema)
                 self.assertTrue(isinstance(serialized["x_of-field"], ObjectId))
                 self.assertTrue(isinstance(serialized["oid-field"], ObjectId))
 
-    def test_serialize_list_alongside_x_of_rules(self):
+    async def test_serialize_list_alongside_x_of_rules(self):
         for x_of in ["allof", "anyof", "oneof", "noneof"]:
             schema = {
                 "x_of-field": {
@@ -361,11 +362,11 @@ class TestSerializer(TestBase):
                 }
             }
             doc = {"x_of-field": ["50656e4538345b39dd0414f0"]}
-            with self.app.app_context():
+            async with self.app.app_context():
                 serialized = serialize(doc, schema=schema)
                 self.assertTrue(isinstance(serialized["x_of-field"][0], ObjectId))
 
-    def test_serialize_inside_nested_x_of_rules(self):
+    async def test_serialize_inside_nested_x_of_rules(self):
         schema = {
             "nested-x_of-field": {
                 "oneof": [
@@ -378,11 +379,11 @@ class TestSerializer(TestBase):
             }
         }
         doc = {"nested-x_of-field": "50656e4538345b39dd0414f0"}
-        with self.app.app_context():
+        async with self.app.app_context():
             serialized = serialize(doc, schema=schema)
             self.assertTrue(isinstance(serialized["nested-x_of-field"], ObjectId))
 
-    def test_serialize_inside_x_of_typesavers(self):
+    async def test_serialize_inside_x_of_typesavers(self):
         for x_of in ["allof", "anyof", "oneof", "noneof"]:
             schema = {
                 "x_of-field": {
@@ -390,11 +391,11 @@ class TestSerializer(TestBase):
                 }
             }
             doc = {"x_of-field": "50656e4538345b39dd0414f0"}
-            with self.app.app_context():
+            async with self.app.app_context():
                 serialized = serialize(doc, schema=schema)
                 self.assertTrue(isinstance(serialized["x_of-field"], ObjectId))
 
-    def test_serialize_inside_list_of_x_of_rules(self):
+    async def test_serialize_inside_list_of_x_of_rules(self):
         for x_of in ["allof", "anyof", "oneof", "noneof"]:
             schema = {
                 "list-field": {
@@ -403,12 +404,12 @@ class TestSerializer(TestBase):
                 }
             }
             doc = {"list-field": ["50656e4538345b39dd0414f0"]}
-            with self.app.app_context():
+            async with self.app.app_context():
                 serialized = serialize(doc, schema=schema)
                 serialized_oid = serialized["list-field"][0]
                 self.assertTrue(isinstance(serialized_oid, ObjectId))
 
-    def test_serialize_inside_list_of_schema_of_x_of_rules(self):
+    async def test_serialize_inside_list_of_schema_of_x_of_rules(self):
         for x_of in ["allof", "anyof", "oneof", "noneof"]:
             schema = {
                 "list-field": {
@@ -426,12 +427,12 @@ class TestSerializer(TestBase):
                 }
             }
             doc = {"list-field": [{"x_of-field": "50656e4538345b39dd0414f0"}]}
-            with self.app.app_context():
+            async with self.app.app_context():
                 serialized = serialize(doc, schema=schema)
                 serialized_oid = serialized["list-field"][0]["x_of-field"]
                 self.assertTrue(isinstance(serialized_oid, ObjectId))
 
-    def test_serialize_inside_list_of_x_of_typesavers(self):
+    async def test_serialize_inside_list_of_x_of_typesavers(self):
         for x_of in ["allof", "anyof", "oneof", "noneof"]:
             schema = {
                 "list-field": {
@@ -442,7 +443,7 @@ class TestSerializer(TestBase):
                 }
             }
             doc = {"list-field": ["50656e4538345b39dd0414f0"]}
-            with self.app.app_context():
+            async with self.app.app_context():
                 serialized = serialize(doc, schema=schema)
                 serialized_oid = serialized["list-field"][0]
                 self.assertTrue(isinstance(serialized_oid, ObjectId))
@@ -473,16 +474,16 @@ class TestNormalizeDottedFields(TestBase):
 
 
 class TestOpLogBase(TestBase):
-    def setUp(self):
-        super().setUp()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
         self.test_field, self.test_value = "ref", "1234567890123456789054321"
         self.data = {self.test_field: self.test_value}
         self.test_client = self.app.test_client()
         self.headers = [(("Content-Type", "application/json"))]
 
-    def oplog_reset(self):
+    async def oplog_reset(self):
         self.app._init_oplog()
-        self.app.register_resource("oplog", self.domain["oplog"])
+        await self.app.register_resource("oplog", self.domain["oplog"])
 
         settings = self.app.config["DOMAIN"]["oplog"]
         datasource = settings["datasource"]
@@ -490,9 +491,9 @@ class TestOpLogBase(TestBase):
         datasource["projection"] = {}
         self.app._set_resource_projection(datasource, schema, settings)
 
-    def oplog_get(self, url="/oplog"):
-        r = self.test_client.get(url)
-        return self.parse_response(r)
+    async def oplog_get(self, url="/oplog"):
+        r = await self.test_client.get(url)
+        return await self.parse_response(r)
 
     def assertOpLogEntry(self, entry, op, user=None):
         self.assertTrue("r" in entry)
@@ -501,7 +502,8 @@ class TestOpLogBase(TestBase):
         self.assertTrue(config.DATE_CREATED in entry)
         self.assertTrue("o" in entry)
         self.assertEqual(entry["o"], op)
-        self.assertTrue("127.0.0.1" in entry["ip"])
+
+        self.assertTrue("127.0.0.1" in entry["ip"] or "<local>" in entry["ip"])
         if op in self.app.config["OPLOG_CHANGE_METHODS"]:
             self.assertTrue("c" in entry)
         self.assertTrue("u" in entry)
@@ -512,57 +514,57 @@ class TestOpLogBase(TestBase):
 
 
 class TestOpLogEndpointDisabled(TestOpLogBase):
-    def setUp(self):
-        super().setUp()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
 
         self.app.config["OPLOG"] = True
         from eve.default_settings import OPLOG_CHANGE_METHODS
 
         self.app.config["OPLOG_CHANGE_METHODS"] = OPLOG_CHANGE_METHODS
-        self.oplog_reset()
+        await self.oplog_reset()
 
-    def test_post_oplog(self):
-        r = self.test_client.post(
+    async def test_post_oplog(self):
+        r = await self.test_client.post(
             self.known_resource_url,
-            data=json.dumps(self.data),
+            json=self.data,
             headers=self.headers,
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            scope_base={"REMOTE_ADDR": "127.0.0.1"},
         )
 
         # oplog endpoint is not available.
-        r, status = self.oplog_get()
+        r, status = await self.oplog_get()
         self.assert404(status)
 
         # however the oplog collection has been updated.
         db = self.connection[MONGO_DBNAME]
-        self.assertEqual(db.oplog.count_documents({}), 1)
-        self.assertOpLogEntry(db.oplog.find()[0], "POST")
+        self.assertEqual(await db.oplog.count_documents({}), 1)
+        self.assertOpLogEntry((await db.oplog.find().to_list(None))[0], "POST")
 
 
 class TestOpLogEndpointEnabled(TestOpLogBase):
-    def setUp(self):
-        super().setUp()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
 
         self.app.config["OPLOG"] = True
         self.app.config["OPLOG_ENDPOINT"] = "oplog"
-        self.oplog_reset()
+        await self.oplog_reset()
 
-    def test_oplog_hook(self):
-        def oplog_callback(resource, entries):
+    async def test_oplog_hook(self):
+        async def oplog_callback(resource, entries):
             for entry in entries:
                 entry["extra"] = {"customfield": "customvalue"}
 
         self.app.on_oplog_push += oplog_callback
 
-        r = self.test_client.post(
+        r = await self.test_client.post(
             self.known_resource_url,
-            data=json.dumps(self.data),
+            json=self.data,
             headers=self.headers,
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            scope_base={"REMOTE_ADDR": "127.0.0.1"},
         )
 
         # oplog enpoint does not expose the 'extra' field
-        r, status = self.oplog_get()
+        r, status = await self.oplog_get()
         self.assert200(status)
         self.assertEqual(len(r["_items"]), 1)
         oplog_entry = r["_items"][0]
@@ -571,18 +573,19 @@ class TestOpLogEndpointEnabled(TestOpLogBase):
 
         # however the oplog collection has the field.
         db = self.connection[MONGO_DBNAME]
-        db.oplog.find()
-        self.assertEqual(db.oplog.count_documents({}), 1)
-        oplog_entry = db.oplog.find()[0]
+        await db.oplog.find().to_list(None)
+        self.assertEqual(await db.oplog.count_documents({}), 1)
+        oplog_entry = (await db.oplog.find().to_list(None))[0]
         self.assertTrue("extra" in oplog_entry)
         self.assertTrue("customvalue" in oplog_entry["extra"]["customfield"])
 
         # enable 'extra' field for the endpoint
         self.app.config["OPLOG_RETURN_EXTRA_FIELD"] = True
-        self.oplog_reset()
+        self.app._got_first_request = False
+        await self.oplog_reset()
 
         # now the oplog endpoint includes the 'extra' field
-        r, status = self.oplog_get()
+        r, status = await self.oplog_get()
         self.assert200(status)
         self.assertEqual(len(r["_items"]), 1)
         oplog_entry = r["_items"][0]
@@ -590,182 +593,183 @@ class TestOpLogEndpointEnabled(TestOpLogBase):
         self.assertTrue("extra" in oplog_entry)
         self.assertTrue("customvalue" in oplog_entry["extra"]["customfield"])
 
-    def test_post_oplog(self):
-        r = self.test_client.post(
+    async def test_post_oplog(self):
+        r = await self.test_client.post(
             self.different_resource_url,
-            data=json.dumps({"username": "test", "ref": "1234567890123456789012345"}),
+            json={"username": "test", "ref": "1234567890123456789012345"},
             headers=self.headers,
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            scope_base={"REMOTE_ADDR": "127.0.0.1"},
         )
 
-        r, status = self.oplog_get()
+        r, status = await self.oplog_get()
         self.assert200(status)
         self.assertEqual(len(r["_items"]), 1)
         oplog_entry = r["_items"][0]
         self.assertOpLogEntry(oplog_entry, "POST")
         self.assertTrue("extra" not in oplog_entry)
 
-    def test_post_oplog_does_not_alter_document(self):
+    async def test_post_oplog_does_not_alter_document(self):
         """Make sure we don't alter document ETag when performing an
         oplog_push. See #590 and #1206."""
         self.app.config["OPLOG_CHANGE_METHODS"].append("POST")
-        r = self.test_client.post(
+        r = await self.test_client.post(
             self.different_resource_url,
-            data=json.dumps({"username": "test", "ref": "1234567890123456789012345"}),
+            json={"username": "test", "ref": "1234567890123456789012345"},
             headers=self.headers,
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            scope_base={"REMOTE_ADDR": "127.0.0.1"},
         )
 
-        item_id = json.loads(r.get_data())["_id"]
-        etag1 = json.loads(r.get_data())["_etag"]
-        item, _ = self.get(self.different_resource, item=item_id)
+        r_data = await r.get_data()
+        item_id = json.loads(r_data)["_id"]
+        etag1 = json.loads(r_data)["_etag"]
+        item, _ = await self.get(self.different_resource, item=item_id)
         etag2 = item["_etag"]
         self.assertEqual(etag1, etag2)
 
-    def test_patch_oplog(self):
+    async def test_patch_oplog(self):
         self.headers.append(("If-Match", self.item_etag))
-        r = self.test_client.patch(
+        r = await self.test_client.patch(
             self.item_id_url,
-            data=json.dumps(self.data),
+            json=self.data,
             headers=self.headers,
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            scope_base={"REMOTE_ADDR": "127.0.0.1"},
         )
-        r, status = self.oplog_get()
+        r, status = await self.oplog_get()
         self.assert200(status)
         self.assertEqual(len(r["_items"]), 1)
         oplog_entry = r["_items"][0]
         self.assertOpLogEntry(oplog_entry, "PATCH")
 
-    def test_put_oplog(self):
+    async def test_put_oplog(self):
         self.headers.append(("If-Match", self.item_etag))
-        r = self.test_client.put(
+        r = await self.test_client.put(
             self.item_id_url,
-            data=json.dumps(self.data),
+            json=self.data,
             headers=self.headers,
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            scope_base={"REMOTE_ADDR": "127.0.0.1"},
         )
-        r, status = self.oplog_get()
+        r, status = await self.oplog_get()
         self.assert200(status)
         self.assertEqual(len(r["_items"]), 1)
         oplog_entry = r["_items"][0]
         self.assertOpLogEntry(oplog_entry, "PUT")
 
-    def test_put_oplog_does_not_alter_document(self):
+    async def test_put_oplog_does_not_alter_document(self):
         """Make sure we don't alter document ETag when performing an
         oplog_push. See #590."""
         self.headers.append(("If-Match", self.item_etag))
-        r = self.test_client.put(
+        r = await self.test_client.put(
             self.item_id_url,
-            data=json.dumps(self.data),
+            json=self.data,
             headers=self.headers,
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            scope_base={"REMOTE_ADDR": "127.0.0.1"},
         )
 
-        etag1 = json.loads(r.get_data())["_etag"]
-        etag2 = json.loads(self.test_client.get(self.item_id_url).get_data())["_etag"]
+        etag1 = json.loads(await r.get_data())["_etag"]
+        etag2 = json.loads(await (await self.test_client.get(self.item_id_url)).get_data())["_etag"]
         self.assertEqual(etag1, etag2)
 
-    def test_delete_oplog(self):
+    async def test_delete_oplog(self):
         self.headers.append(("If-Match", self.item_etag))
-        r = self.test_client.delete(
+        r = await self.test_client.delete(
             self.item_id_url,
             headers=self.headers,
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            scope_base={"REMOTE_ADDR": "127.0.0.1"},
         )
-        r, status = self.oplog_get()
+        r, status = await self.oplog_get()
         self.assert200(status)
         self.assertEqual(len(r["_items"]), 1)
         oplog_entry = r["_items"][0]
         self.assertOpLogEntry(oplog_entry, "DELETE")
 
-    def test_soft_delete_oplog(self):
-        r, s = self.parse_response(self.test_client.get(self.item_id_url))
+    async def test_soft_delete_oplog(self):
+        r, s = await self.parse_response(await self.test_client.get(self.item_id_url))
         doc_date = r[config.LAST_UPDATED]
         time.sleep(1)
 
         self.domain[self.known_resource]["soft_delete"] = True
 
         self.headers.append(("If-Match", self.item_etag))
-        r = self.test_client.delete(
+        r = await self.test_client.delete(
             self.item_id_url,
             headers=self.headers,
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            scope_base={"REMOTE_ADDR": "127.0.0.1"},
         )
-        r, status = self.oplog_get()
+        r, status = await self.oplog_get()
         self.assert200(status)
         self.assertEqual(len(r["_items"]), 1)
         oplog_entry = r["_items"][0]
         self.assertOpLogEntry(oplog_entry, "DELETE")
         self.assertTrue(doc_date != oplog_entry[config.LAST_UPDATED])
 
-    def test_post_oplog_with_basic_auth(self):
+    async def test_post_oplog_with_basic_auth(self):
         self.domain["contacts"]["authentication"] = ValidBasicAuth
         self.headers.append(("Authorization", "Basic YWRtaW46c2VjcmV0"))
-        r = self.test_client.post(
+        r = await self.test_client.post(
             self.known_resource_url,
-            data=json.dumps(self.data),
+            json=self.data,
             headers=self.headers,
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            scope_base={"REMOTE_ADDR": "127.0.0.1"},
         )
-        r, status = self.oplog_get()
+        r, status = await self.oplog_get()
         self.assert200(status)
         self.assertEqual(len(r["_items"]), 1)
         oplog_entry = r["_items"][0]
         self.assertOpLogEntry(oplog_entry, "POST", "admin")
 
-    def test_post_oplog_with_token_auth(self):
+    async def test_post_oplog_with_token_auth(self):
         self.domain["contacts"]["authentication"] = ValidTokenAuth
         self.headers.append(("Authorization", "Basic dGVzdF90b2tlbjo="))
-        r = self.test_client.post(
+        r = await self.test_client.post(
             self.known_resource_url,
-            data=json.dumps(self.data),
+            json=self.data,
             headers=self.headers,
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            scope_base={"REMOTE_ADDR": "127.0.0.1"},
         )
-        r, status = self.oplog_get()
+        r, status = await self.oplog_get()
         self.assert200(status)
         self.assertEqual(len(r["_items"]), 1)
         oplog_entry = r["_items"][0]
         self.assertOpLogEntry(oplog_entry, "POST", "test_token")
 
-    def test_post_oplog_with_hmac_auth(self):
+    async def test_post_oplog_with_hmac_auth(self):
         self.domain["contacts"]["authentication"] = ValidHMACAuth
         self.headers.append(("Authorization", "admin:secret"))
-        r = self.test_client.post(
+        r = await self.test_client.post(
             self.known_resource_url,
-            data=json.dumps(self.data),
+            json=self.data,
             headers=self.headers,
-            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            scope_base={"REMOTE_ADDR": "127.0.0.1"},
         )
-        r, status = self.oplog_get()
+        r, status = await self.oplog_get()
         self.assert200(status)
         self.assertEqual(len(r["_items"]), 1)
         oplog_entry = r["_items"][0]
         self.assertOpLogEntry(oplog_entry, "POST", "admin")
 
-    def patch(self, url, data, headers=[], content_type="application/json"):
+    async def patch(self, url, data, headers=[], content_type="application/json"):
         headers.append(("Content-Type", content_type))
         headers.append(("If-Match", self.item_etag))
-        r = self.test_client.patch(url, data=json.dumps(data), headers=headers)
-        return self.parse_response(r)
+        r = await self.test_client.patch(url, json=data, headers=headers)
+        return await self.parse_response(r)
 
-    def put(self, url, data, headers=[], content_type="application/json"):
+    async def put(self, url, data, headers=[], content_type="application/json"):
         headers.append(("Content-Type", content_type))
         headers.append(("If-Match", self.item_etag))
-        r = self.test_client.put(url, data=json.dumps(data), headers=headers)
-        return self.parse_response(r)
+        r = await self.test_client.put(url, json=data, headers=headers)
+        return await self.parse_response(r)
 
 
 class TestTickets(TestBase):
-    def test_ticket_681(self):
+    async def test_ticket_681(self):
         # See https://github.com/pyeve/eve/issues/681
-        with self.app.test_request_context("not_an_existing_endpoint"):
+        async with self.app.test_request_context("not_an_existing_endpoint"):
             self.app.data.driver.db["again"]
 
 
 class TestEmbeddedDocuments(TestBase):
-    def setUp(self, url_converters=None):
-        super().setUp()
+    async def asyncSetUp(self, url_converters=None):
+        await super().asyncSetUp()
 
     def test_sort_per_resource_embedded_docs(self):
         object_ids = [ObjectId() for _ in range(8)]

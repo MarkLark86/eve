@@ -8,16 +8,16 @@ from bson import ObjectId
 from eve import ETAG, STATUS, STATUS_OK
 from eve.tests import TestBase
 from eve.tests.test_settings import MONGO_DBNAME
-from eve.tests.utils import DummyEvent
+from eve.tests.utils import DummyEventAsyncIO
 
 
 class TestVersioningBase(TestBase):
-    def setUp(self):
+    async def asyncSetUp(self):
         self.versioned_field = "ref"
         self.unversioned_field = "prog"
         self.fields = [self.versioned_field, self.unversioned_field]
 
-        super().setUp()
+        await super().asyncSetUp()
 
         self.id_field = self.domain[self.known_resource]["id_field"]
         self.version_field = self.app.config["VERSION"]
@@ -27,11 +27,12 @@ class TestVersioningBase(TestBase):
 
         self._db = self.connection[MONGO_DBNAME]
 
-    def tearDown(self):
-        super().tearDown()
+    async def asyncTearDown(self):
+        await super().asyncTearDown()
         self.connection.close()
 
-    def enableVersioning(self, partial=False):
+    async def enableVersioning(self, partial=False):
+        self.app._got_first_request = False
         del self.domain["contacts"]["schema"]["title"]["default"]
         del self.domain["contacts"]["schema"]["dependency_field1"]["default"]
         del self.domain["contacts"]["schema"]["unsetted_default_value_field"]["default"]
@@ -46,7 +47,7 @@ class TestVersioningBase(TestBase):
         for resource, settings in domain.items():
             settings["versioning"] = True
             settings["datasource"].pop("projection", None)
-            self.app.register_resource(resource, settings)
+            await self.app.register_resource(resource, settings)
 
     def enableDataVersionRelation(
         self, embeddable=True, custom_field=None, custom_field_type="string"
@@ -67,13 +68,14 @@ class TestVersioningBase(TestBase):
 
         self.domain["invoices"]["schema"]["person"] = field
 
-    def enableSoftDelete(self):
+    async def enableSoftDelete(self):
+        self.app._got_first_request = False
         self.app.config["SOFT_DELETE"] = True
         domain = copy.copy(self.domain)
         for resource, settings in domain.items():
             # rebuild resource settings for soft delete
             del settings["soft_delete"]
-            self.app.register_resource(resource, settings)
+            await self.app.register_resource(resource, settings)
 
         self.deleted_field = self.app.config["DELETED"]
 
@@ -95,27 +97,27 @@ class TestVersioningBase(TestBase):
             latest_version = version
         self.assertLatestVersion(response, latest_version)
 
-    def directGetDocument(self, _id):
-        return self._db[self.known_resource].find_one(ObjectId(_id))
+    async def directGetDocument(self, _id):
+        return await self._db[self.known_resource].find_one(ObjectId(_id))
 
-    def directGetShadowDocument(self, _id, version):
-        return self._db[self.known_resource_shadow].find_one(
+    async def directGetShadowDocument(self, _id, version):
+        return await self._db[self.known_resource_shadow].find_one(
             {self.document_id_field: ObjectId(_id), self.app.config["VERSION"]: version}
         )
 
-    def countDocuments(self, _id=None):
+    async def countDocuments(self, _id=None):
         query = {}
         if _id is not None:
             query[self.id_field] = ObjectId(_id)
 
-        return self._db[self.known_resource].count_documents(query)
+        return await self._db[self.known_resource].count_documents(query)
 
-    def countShadowDocuments(self, _id=None):
+    async def countShadowDocuments(self, _id=None):
         query = {}
         if _id is not None:
             query[self.document_id_field] = ObjectId(_id)
 
-        return self._db[self.known_resource_shadow].count_documents(query)
+        return await self._db[self.known_resource_shadow].count_documents(query)
 
     def assertGoodPutPatch(self, response, status):
         self.assert200(status)
@@ -124,8 +126,8 @@ class TestVersioningBase(TestBase):
 
 
 class TestNormalVersioning(TestVersioningBase):
-    def setUp(self):
-        super().setUp()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
 
         # create some dummy contacts to use for versioning tests
         self.item = {
@@ -137,8 +139,8 @@ class TestNormalVersioning(TestVersioningBase):
             self.unversioned_field: 456,
         }
 
-    def insertTestData(self):
-        contact, status = self.post(self.known_resource_url, data=self.item)
+    async def insertTestData(self):
+        contact, status = await self.post(self.known_resource_url, data=self.item)
         self.assert201(status)
         self.item_id = contact[self.id_field]
         self.item_etag = contact[ETAG]
@@ -147,16 +149,16 @@ class TestNormalVersioning(TestVersioningBase):
             self.item_id,
         )
 
-    def assertPrimaryAndShadowDocuments(self, _id, version, partial=False):
+    async def assertPrimaryAndShadowDocuments(self, _id, version, partial=False):
         # verify primary document fields
-        document = self.directGetDocument(_id)
+        document = await self.directGetDocument(_id)
         self.assertTrue(document is not None)
         self.assertTrue(document[self.version_field] == version)
         self.assertTrue(self.versioned_field in document)
         self.assertTrue(self.unversioned_field in document)
 
         # verify shadow documents fields
-        shadow_document = self.directGetShadowDocument(_id, version)
+        shadow_document = await self.directGetShadowDocument(_id, version)
         self.assertTrue(shadow_document is not None)
         self.assertTrue(self.versioned_field in shadow_document)
         self.assertEqual(
@@ -203,9 +205,9 @@ class TestNormalVersioning(TestVersioningBase):
             self.assertEqual("%s?version=all" % self_url.split("?")[0], coll_url)
             self.assertEqual(coll_url.split("?")[0], prnt_url)
 
-    def do_test_get(self):
+    async def do_test_get(self):
         query = '?where={"%s":"%s"}' % (self.id_field, self.item_id)
-        response, status = self.get(self.known_resource, query=query)
+        response, status = await self.get(self.known_resource, query=query)
         response = response[self.app.config["ITEMS"]][0]
 
         # get always returns the latest version of a document
@@ -213,9 +215,9 @@ class TestNormalVersioning(TestVersioningBase):
         self.assertDocumentVersionFields(response, 1)
         self.assertEqualFields(self.item, response, self.fields)
 
-    def do_test_getitem(self, partial):
+    async def do_test_getitem(self, partial):
         # put a second version
-        response, status = self.put(
+        response, status = await self.put(
             self.item_id_url,
             data=self.item_change,
             headers=[("If-Match", self.item_etag)],
@@ -230,7 +232,7 @@ class TestNormalVersioning(TestVersioningBase):
             version_1 = self.item
 
         # check the get of the first version
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=1"
         )
         self.assert200(status)
@@ -240,7 +242,7 @@ class TestNormalVersioning(TestVersioningBase):
         self.assertHateoasLinks(links, 1)
 
         # check the get of the second version
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=2"
         )
         self.assert200(status)
@@ -250,76 +252,76 @@ class TestNormalVersioning(TestVersioningBase):
         self.assertHateoasLinks(links, 2)
 
         # check the get without version specified and make sure it is version 2
-        response, status = self.get(self.known_resource, item=self.item_id)
+        response, status = await self.get(self.known_resource, item=self.item_id)
         self.assert200(status)
         self.assertDocumentVersionFields(response, 2)
         self.assertEqualFields(self.item_change, response, self.fields)
 
-    def do_test_post(self, partial):
-        response, status = self.post(self.known_resource_url, data=self.item_change)
+    async def do_test_post(self, partial):
+        response, status = await self.post(self.known_resource_url, data=self.item_change)
         self.assert201(status)
         _id = response[self.id_field]
-        self.assertPrimaryAndShadowDocuments(_id, 1, partial=partial)
+        await self.assertPrimaryAndShadowDocuments(_id, 1, partial=partial)
 
-        document = self.directGetDocument(_id)
+        document = await self.directGetDocument(_id)
         self.assertEqualFields(self.item_change, document, self.fields)
 
-        self.assertTrue(self.countShadowDocuments(self.item_id) == 1)
+        self.assertTrue((await self.countShadowDocuments(self.item_id)) == 1)
 
     def do_test_multi_post(self):
         self.assertTrue(True)
 
-    def do_test_put(self, partial):
-        response, status = self.put(
+    async def do_test_put(self, partial):
+        response, status = await self.put(
             self.item_id_url,
             data=self.item_change,
             headers=[("If-Match", self.item_etag)],
         )
         self.assertGoodPutPatch(response, status)
-        self.assertPrimaryAndShadowDocuments(self.item_id, 2, partial=partial)
+        await self.assertPrimaryAndShadowDocuments(self.item_id, 2, partial=partial)
 
-        document = self.directGetDocument(self.item_id)
+        document = await self.directGetDocument(self.item_id)
         self.assertEqualFields(self.item_change, document, self.fields)
 
-        self.assertTrue(self.countShadowDocuments(self.item_id) == 2)
+        self.assertTrue((await self.countShadowDocuments(self.item_id)) == 2)
 
-    def do_test_patch(self, partial):
-        response, status = self.patch(
+    async def do_test_patch(self, partial):
+        response, status = await self.patch(
             self.item_id_url,
             data=self.item_change,
             headers=[("If-Match", self.item_etag)],
         )
         self.assertGoodPutPatch(response, status)
-        self.assertPrimaryAndShadowDocuments(self.item_id, 2, partial=partial)
+        await self.assertPrimaryAndShadowDocuments(self.item_id, 2, partial=partial)
 
-        document = self.directGetDocument(self.item_id)
+        document = await self.directGetDocument(self.item_id)
         self.assertEqualFields(self.item_change, document, self.fields)
 
-        self.assertTrue(self.countShadowDocuments(self.item_id) == 2)
+        self.assertTrue((await self.countShadowDocuments(self.item_id)) == 2)
 
     def do_test_version_control_the_unkown(self):
         self.assertTrue(True)
 
 
 class TestCompleteVersioning(TestNormalVersioning):
-    def setUp(self):
-        super().setUp()
-        self.enableVersioning()
-        self.insertTestData()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await self.enableVersioning()
+        await self.insertTestData()
 
-    def test_get(self):
+    async def test_get(self):
         """"""
-        self.do_test_get()
+        await self.do_test_get()
 
-    def test_getitem(self):
+    async def test_getitem(self):
         """"""
-        self.do_test_getitem(partial=False)
+        await self.do_test_getitem(partial=False)
 
-    def test_post(self):
+    async def test_post(self):
         """Verify that a shadow document is created on post with all of the
         appropriate fields.
         """
-        self.do_test_post(partial=False)
+        await self.do_test_post(partial=False)
 
     def test_multi_post(self):
         """Eve literally throws single documents into an array before
@@ -328,39 +330,39 @@ class TestCompleteVersioning(TestNormalVersioning):
         """
         self.do_test_multi_post()
 
-    def test_put(self):
+    async def test_put(self):
         """Verify that an additional shadow document is created on post with
         all of the appropriate fields.
         """
-        self.do_test_put(partial=False)
+        await self.do_test_put(partial=False)
 
-    def test_patch(self):
+    async def test_patch(self):
         """"""
-        self.do_test_patch(partial=False)
+        await self.do_test_patch(partial=False)
 
     def test_version_control_the_unkown(self):
         """"""
         self.do_test_version_control_the_unkown()
 
-    def test_getitem_version_unknown(self):
+    async def test_getitem_version_unknown(self):
         """Make sure that Eve return a nice error when requesting an unknown
         version.
         """
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=2"
         )
         self.assert404(status)
 
-    def test_getitem_version_bad_format(self):
+    async def test_getitem_version_bad_format(self):
         """Make sure that Eve return a nice error when requesting an unknown
         version.
         """
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=bad"
         )
         self.assert400(status)
 
-    def test_getitem_version_all(self):
+    async def test_getitem_version_all(self):
         """Verify that all documents are returned which each appearing exactly
         as it would if it were accessed explicitly.
         """
@@ -375,7 +377,7 @@ class TestCompleteVersioning(TestNormalVersioning):
         ]
 
         # put a second version
-        response, status = self.put(
+        response, status = await self.put(
             self.item_id_url,
             data=self.item_change,
             headers=[("If-Match", self.item_etag)],
@@ -384,7 +386,7 @@ class TestCompleteVersioning(TestNormalVersioning):
         etag2 = response[self.app.config["ETAG"]]
 
         # get query
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=all"
         )
         self.assert200(status)
@@ -415,18 +417,18 @@ class TestCompleteVersioning(TestNormalVersioning):
             int(self_href.split("?version=")[1]), items[1][self.version_field]
         )
 
-    def test_getitem_version_pagination(self):
+    async def test_getitem_version_pagination(self):
         """Verify that `?version=all` and `?version=diffs` display pagination
         links when results exceed `PAGINATION_DEFAULT`.
         """
         # create many versions
-        response, status = self.put(
+        response, status = await self.put(
             self.item_id_url,
             data=self.item_change,
             headers=[("If-Match", self.item_etag)],
         )
         for n in range(100):
-            response, status = self.put(
+            response, status = await self.put(
                 self.item_id_url,
                 data=self.item_change,
                 headers=[("If-Match", response[self.app.config["ETAG"]])],
@@ -434,7 +436,7 @@ class TestCompleteVersioning(TestNormalVersioning):
 
         # get 2nd page of results
         page = 2
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=all&page=%d" % page
         )
         links = response["_links"]
@@ -444,13 +446,13 @@ class TestCompleteVersioning(TestNormalVersioning):
         self.assertPagination(response, 2, 102, 25)
         self.assertHateoasLinks(links, "all")
 
-    def test_on_fetched_item(self):
+    async def test_on_fetched_item(self):
         """Verify that on_fetched_item events are fired for versioned
         requests.
         """
-        devent = DummyEvent(lambda: True)
+        devent = DummyEventAsyncIO(lambda: True)
         self.app.on_fetched_item += devent
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=1"
         )
         self.assertEqual(self.known_resource, devent.called[0])
@@ -458,9 +460,9 @@ class TestCompleteVersioning(TestNormalVersioning):
         self.assertEqual(2, len(devent.called))
 
         # check for ?version=all requests
-        devent = DummyEvent(lambda: True)
+        devent = DummyEventAsyncIO(lambda: True)
         self.app.on_fetched_item += devent
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=all"
         )
         self.assertEqual(self.known_resource, devent.called[0])
@@ -468,95 +470,95 @@ class TestCompleteVersioning(TestNormalVersioning):
         self.assertEqual(2, len(devent.called))
 
         # check for ?version=diffs requests
-        devent = DummyEvent(lambda: True)
+        devent = DummyEventAsyncIO(lambda: True)
         self.app.on_fetched_item += devent
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=diffs"
         )
         self.assertEqual(None, devent.called)
 
-    def test_on_fetched_item_contacts(self):
+    async def test_on_fetched_item_contacts(self):
         """Verify that on_fetched_item_contacts events are fired for versioned
         requests.
         """
-        devent = DummyEvent(lambda: True)
+        devent = DummyEventAsyncIO(lambda: True)
         self.app.on_fetched_item_contacts += devent
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=1"
         )
         self.assertEqual(self.item_id, str(devent.called[0][self.id_field]))
         self.assertEqual(1, len(devent.called))
 
         # check for ?version=all requests
-        devent = DummyEvent(lambda: True)
+        devent = DummyEventAsyncIO(lambda: True)
         self.app.on_fetched_item_contacts += devent
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=all"
         )
         self.assertEqual(self.item_id, str(devent.called[0][self.id_field]))
         self.assertEqual(1, len(devent.called))
 
         # check for ?version=diffs requests
-        devent = DummyEvent(lambda: True)
+        devent = DummyEventAsyncIO(lambda: True)
         self.app.on_fetched_item_contacts += devent
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=diffs"
         )
         self.assertEqual(None, devent.called)
 
         # TODO: also test with HATEOS off
 
-    def test_on_fetched_diffs(self):
+    async def test_on_fetched_diffs(self):
         """Verify that on_fetched_item events are fired for
         version=diffs requests.
         """
-        devent = DummyEvent(lambda: True)
+        devent = DummyEventAsyncIO(lambda: True)
         self.app.on_fetched_diffs += devent
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=1"
         )
         self.assertEqual(None, devent.called)
 
         # check for ?version=all requests
-        devent = DummyEvent(lambda: True)
+        devent = DummyEventAsyncIO(lambda: True)
         self.app.on_fetched_diffs += devent
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=all"
         )
         self.assertEqual(None, devent.called)
 
         # check for ?version=diffs requests
-        devent = DummyEvent(lambda: True)
+        devent = DummyEventAsyncIO(lambda: True)
         self.app.on_fetched_diffs += devent
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=diffs"
         )
         self.assertEqual(self.known_resource, devent.called[0])
         self.assertEqual(2, len(devent.called))
 
-    def test_on_fetched_diffs_contacts(self):
+    async def test_on_fetched_diffs_contacts(self):
         """Verify that on_fetched_diffs_contacts events are fired for
         version=diffs requests.
         """
-        devent = DummyEvent(lambda: True)
+        devent = DummyEventAsyncIO(lambda: True)
         self.app.on_fetched_diffs_contacts += devent
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=1"
         )
         self.assertEqual(None, devent.called)
 
         # check for ?version=all requests
-        devent = DummyEvent(lambda: True)
+        devent = DummyEventAsyncIO(lambda: True)
         self.app.on_fetched_diffs_contacts += devent
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=all"
         )
         self.assertEqual(None, devent.called)
 
         # check for ?version=diffs requests
-        devent = DummyEvent(lambda: True)
+        devent = DummyEventAsyncIO(lambda: True)
         self.app.on_fetched_diffs_contacts += devent
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=diffs"
         )
         # Verify first document has id_field
@@ -565,7 +567,7 @@ class TestCompleteVersioning(TestNormalVersioning):
 
         # TODO: also test with HATEOS off
 
-    def test_getitem_version_diffs(self):
+    async def test_getitem_version_diffs(self):
         """Verify that the first document is returned in its entirety and that
         subsequent documents are simply diff to the previous version.
         """
@@ -580,7 +582,7 @@ class TestCompleteVersioning(TestNormalVersioning):
         ]
 
         # put a second version
-        response, status = self.put(
+        response, status = await self.put(
             self.item_id_url,
             data=self.item_change,
             headers=[("If-Match", self.item_etag)],
@@ -589,7 +591,7 @@ class TestCompleteVersioning(TestNormalVersioning):
         etag2 = response[self.app.config["ETAG"]]
 
         # get query
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource, item=self.item_id, query="?version=diffs"
         )
         self.assert200(status)
@@ -626,10 +628,10 @@ class TestCompleteVersioning(TestNormalVersioning):
 
         # TODO: also test with HATEOS off
 
-    def test_getitem_projection(self):
+    async def test_getitem_projection(self):
         """Verify that projections happen smoothly when versioning is on."""
         # test inclusive projection
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource,
             item=self.item_id,
             query='?projection={"%s": 1}' % self.unversioned_field,
@@ -641,7 +643,7 @@ class TestCompleteVersioning(TestNormalVersioning):
         self.assertTrue(self.latest_version_field in response)
 
         # test exclusive projection
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource,
             item=self.item_id,
             query='?projection={"%s": 0}' % self.unversioned_field,
@@ -652,10 +654,10 @@ class TestCompleteVersioning(TestNormalVersioning):
         self.assertTrue(self.version_field in response)
         self.assertTrue(self.latest_version_field in response)
 
-    def test_getitem_version_all_projection(self):
+    async def test_getitem_version_all_projection(self):
         """Verify that projections happen smoothly when versioning is on."""
         # put a second version
-        response, status = self.put(
+        response, status = await self.put(
             self.item_id_url,
             data=self.item_change,
             headers=[("If-Match", self.item_etag)],
@@ -664,7 +666,7 @@ class TestCompleteVersioning(TestNormalVersioning):
 
         # test inclusive projection
         projection = '{"%s": 1}' % self.unversioned_field
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource,
             item=self.item_id,
             query="?version=all&projection=%s" % projection,
@@ -689,7 +691,7 @@ class TestCompleteVersioning(TestNormalVersioning):
 
         # test exclusive projection
         projection = '{"%s": 0}' % self.unversioned_field
-        response, status = self.get(
+        response, status = await self.get(
             self.known_resource,
             item=self.item_id,
             query="?version=all&projection=%s" % projection,
@@ -703,14 +705,14 @@ class TestCompleteVersioning(TestNormalVersioning):
             self.assertTrue(self.version_field in item)
             self.assertTrue(self.latest_version_field in item)
 
-    def test_getitem_version_new_latest_version_invalidates_if_modified_since(self):
+    async def test_getitem_version_new_latest_version_invalidates_if_modified_since(self):
         """Verify that a cached document version is invalidated via
         an 'If-Modified-Since' header when the _latest_version field has
         changed due to creation of a new version
         """
         # get first version and record Last-Modified
-        r = self.test_client.get(self.item_id_url + "?version=1")
-        document, status = self.parse_response(r)
+        r = await self.test_client.get(self.item_id_url + "?version=1")
+        document, status = await self.parse_response(r)
         self.assert200(status)
         self.assertEqual(document[self.latest_version_field], 1)
         last_modified = r.headers.get("Last-Modified")
@@ -718,7 +720,7 @@ class TestCompleteVersioning(TestNormalVersioning):
         # put a second version (after enough time has passed to expect a new
         # Last-Modified header)
         time.sleep(2)
-        response, status = self.put(
+        response, status = await self.put(
             self.item_id_url,
             data=self.item_change,
             headers=[("If-Match", self.item_etag)],
@@ -727,28 +729,28 @@ class TestCompleteVersioning(TestNormalVersioning):
 
         # get first version again and confirm Last-Modified and latest version
         # have been updated
-        r = self.test_client.get(
+        r = await self.test_client.get(
             self.item_id_url + "?version=1",
             headers=[("If-Modified-Since", last_modified)],
         )
-        document, status = self.parse_response(r)
+        document, status = await self.parse_response(r)
         self.assert200(status)
         self.assertEqual(document[self.latest_version_field], 2)
 
-    def test_getitem_version_new_latest_version_invalidates_if_none_match(self):
+    async def test_getitem_version_new_latest_version_invalidates_if_none_match(self):
         """Verify that a cached document version is invalidated via
         an 'If-None-Match' header when the _latest_version field has changed
         due to creation of a new version
         """
         # get first version and record ETag
-        r = self.test_client.get(self.item_id_url + "?version=1")
-        document, status = self.parse_response(r)
+        r = await self.test_client.get(self.item_id_url + "?version=1")
+        document, status = await self.parse_response(r)
         self.assert200(status)
         self.assertEqual(document[self.latest_version_field], 1)
         version1_etag = r.headers.get("ETag")
 
         # put a second version
-        response, status = self.put(
+        response, status = await self.put(
             self.item_id_url,
             data=self.item_change,
             headers=[("If-Match", self.item_etag)],
@@ -756,41 +758,41 @@ class TestCompleteVersioning(TestNormalVersioning):
         self.assertGoodPutPatch(response, status)
 
         # get first version again and confirm latest version has been updated
-        r = self.test_client.get(
+        r = await self.test_client.get(
             self.item_id_url + "?version=1", headers=[("If-None-Match", version1_etag)]
         )
-        document, status = self.parse_response(r)
+        document, status = await self.parse_response(r)
         self.assert200(status)
         self.assertEqual(document[self.latest_version_field], 2)
 
-    def test_automatic_fields(self):
+    async def test_automatic_fields(self):
         """Make sure that Eve throws an error if we try to set a versioning
         field manually.
         """
         # set _version
         self.item_change[self.version_field] = "1"
-        r, status = self.post(self.known_resource_url, data=self.item_change)
+        r, status = await self.post(self.known_resource_url, data=self.item_change)
         self.assertValidationErrorStatus(status)
         self.assertValidationError(r, {self.version_field: "unknown field"})
 
         # set _latest_version
         self.item_change[self.latest_version_field] = "1"
-        r, status = self.post(self.known_resource_url, data=self.item_change)
+        r, status = await self.post(self.known_resource_url, data=self.item_change)
         self.assertValidationErrorStatus(status)
         self.assertValidationError(r, {self.latest_version_field: "unknown field"})
 
         # set _id_document
         self.item_change[self.document_id_field] = "1"
-        r, status = self.post(self.known_resource_url, data=self.item_change)
+        r, status = await self.post(self.known_resource_url, data=self.item_change)
         self.assertValidationErrorStatus(status)
         self.assertValidationError(r, {self.document_id_field: "unknown field"})
 
-    def test_referential_integrity(self):
+    async def test_referential_integrity(self):
         """Make sure that Eve still correctly handles vanilla data_relations
         when versioning is turned on. (Copied from tests/methods/post.py.)
         """
         data = {"person": self.unknown_item_id}
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assertValidationErrorStatus(status)
         expected = "value '%s' must exist in resource '%s', field '%s'" % (
             self.unknown_item_id,
@@ -800,10 +802,10 @@ class TestCompleteVersioning(TestNormalVersioning):
         self.assertValidationError(r, {"person": expected})
 
         data = {"person": self.item_id}
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assert201(status)
 
-    def test_delete(self):
+    async def test_delete(self):
         """Verify that we don't throw an error if we delete a resource that is
         supposed to be versioned but whose shadow collection does not exist.
         """
@@ -811,36 +813,36 @@ class TestCompleteVersioning(TestNormalVersioning):
         self.domain["contacts"]["datasource"]["filter"] = None
 
         # verify the primary collection exists but the shadow does not
-        self.assertTrue(self.countDocuments() > 0)
-        self.assertTrue(self.countShadowDocuments() > 0)
+        self.assertTrue((await self.countDocuments()) > 0)
+        self.assertTrue((await self.countShadowDocuments()) > 0)
 
         # delete resource and verify no errors
-        response, status = self.delete(self.known_resource_url)
+        response, status = await self.delete(self.known_resource_url)
         self.assert204(status)
 
         # verify that there are 0 documents in both collections
-        self.assertTrue(self.countDocuments() == 0)
-        self.assertTrue(self.countShadowDocuments() == 0)
+        self.assertTrue((await self.countDocuments()) == 0)
+        self.assertTrue((await self.countShadowDocuments()) == 0)
 
-    def test_deleteitem(self):
+    async def test_deleteitem(self):
         """Verify that we don't throw an error if we delete an item that is
         supposed to be versioned but that doesn't have any shadow copies.
         """
         # verify the primary document exists but no shadow documents do
-        self.assertTrue(self.countDocuments(self.item_id) > 0)
-        self.assertTrue(self.countShadowDocuments(self.item_id) > 0)
+        self.assertTrue((await self.countDocuments(self.item_id)) > 0)
+        self.assertTrue((await self.countShadowDocuments(self.item_id)) > 0)
 
         # delete resource and verify no errors
-        response, status = self.delete(
+        response, status = await self.delete(
             self.item_id_url, headers=[("If-Match", self.item_etag)]
         )
         self.assert204(status)
 
         # verify that neither primary or shadow documents exist
-        self.assertTrue(self.countDocuments(self.item_id) == 0)
-        self.assertTrue(self.countShadowDocuments(self.item_id) == 0)
+        self.assertTrue((await self.countDocuments(self.item_id)) == 0)
+        self.assertTrue((await self.countShadowDocuments(self.item_id)) == 0)
 
-    def test_softdelete(self):
+    async def test_softdelete(self):
         """Deleting a versioned item with soft delete enabled should create a
         new version marked as deleted, which is returned with 404 Not Found in
         response to GET requests. GETs of previous versions should continue to
@@ -848,49 +850,49 @@ class TestCompleteVersioning(TestNormalVersioning):
         should include the soft deleted version as if it were a normal version
         of the document.
         """
-        self.enableSoftDelete()
-        response, status = self.delete(
+        await self.enableSoftDelete()
+        response, status = await self.delete(
             self.item_id_url, headers=[("If-Match", self.item_etag)]
         )
         self.assert204(status)
 
         # verify that the primary document and two (v1 and deleted v2) shadow
         # documents exist
-        self.assertTrue(self.countDocuments(self.item_id) == 1)
-        self.assertTrue(self.countShadowDocuments(self.item_id) == 2)
+        self.assertTrue((await self.countDocuments(self.item_id)) == 1)
+        self.assertTrue((await self.countShadowDocuments(self.item_id)) == 2)
 
         # GET primary should return `404 Not Found` w/ doc + _deleted == True
-        r = self.test_client.get(self.item_id_url)
-        document, status = self.parse_response(r)
+        r = await self.test_client.get(self.item_id_url)
+        document, status = await self.parse_response(r)
         self.assert404(status)
         self.assertEqual(document[self.latest_version_field], 2)
         self.assertEqual(document.get(self.deleted_field), True)
 
         # GET v2 should return `404 Not Found` w/ doc + _deleted == True
-        r = self.test_client.get(self.item_id_url + "?version=2")
-        document, status = self.parse_response(r)
+        r = await self.test_client.get(self.item_id_url + "?version=2")
+        document, status = await self.parse_response(r)
         self.assert404(status)
         self.assertEqual(document[self.latest_version_field], 2)
         self.assertEqual(document.get(self.deleted_field), True)
 
         # GET v1 should return `200 OK` w/ doc + _deleted == False
-        r = self.test_client.get(self.item_id_url + "?version=1")
-        document, status = self.parse_response(r)
+        r = await self.test_client.get(self.item_id_url + "?version=1")
+        document, status = await self.parse_response(r)
         self.assert200(status)
         self.assertEqual(document[self.latest_version_field], 2)
         self.assertEqual(document.get(self.deleted_field), False)
 
         # GET ?version=all and ?version=diff should include the deleted version
         # as if it were any other version, but with the _deleted flag == True
-        r = self.test_client.get(self.item_id_url + "?version=all")
-        document, status = self.parse_response(r)
+        r = await self.test_client.get(self.item_id_url + "?version=all")
+        document, status = await self.parse_response(r)
         self.assert200(status)
         items = document[self.app.config["ITEMS"]]
         self.assertEqual(len(items), 2)
         self.assertEqual(items[1].get(self.deleted_field), True)
 
-        r = self.test_client.get(self.item_id_url + "?version=diffs")
-        document, status = self.parse_response(r)
+        r = await self.test_client.get(self.item_id_url + "?version=diffs")
+        document, status = await self.parse_response(r)
         self.assert200(status)
         items = document[self.app.config["ITEMS"]]
         self.assertEqual(len(items), 2)
@@ -911,54 +913,54 @@ class TestCompleteVersioning(TestNormalVersioning):
         for field in changed_fields:
             self.assertTrue(field in items[1], "%s not in diffs" % field)
 
-    def test_softdelete_version_db_fields(self):
+    async def test_softdelete_version_db_fields(self):
         """Document versions created with soft delete enabled should include
         the DELETED field.
         """
-        self.enableSoftDelete()
+        await self.enableSoftDelete()
 
         # v1 created before soft delete was enabled, it will not have DELETED
-        v1_doc = self._db[self.known_resource_shadow].find_one(
+        v1_doc = await self._db[self.known_resource_shadow].find_one(
             {self.document_id_field: ObjectId(self.item_id), self.version_field: 1}
         )
         self.assertEqual(v1_doc.get(self.deleted_field), None)
 
         # Create second version
-        r = self.test_client.patch(
+        r = await self.test_client.patch(
             self.item_id_url,
-            data={"ref": "1234567890123456789012345"},
+            json={"ref": "1234567890123456789012345"},
             headers=[("If-Match", self.item_etag)],
         )
         # Create deleted third version
-        response, status = self.delete(
+        response, status = await self.delete(
             self.item_id_url, headers=[("If-Match", r.headers["ETag"])]
         )
         self.assert204(status)
 
         # v2 doc should have DELETED = False added
-        v2_doc = self._db[self.known_resource_shadow].find_one(
+        v2_doc = await self._db[self.known_resource_shadow].find_one(
             {self.document_id_field: ObjectId(self.item_id), self.version_field: 2}
         )
         self.assertEqual(v2_doc.get(self.deleted_field), False)
 
         # v3 should have DELETED = True
-        v3_doc = self._db[self.known_resource_shadow].find_one(
+        v3_doc = await self._db[self.known_resource_shadow].find_one(
             {self.document_id_field: ObjectId(self.item_id), self.version_field: 3}
         )
         self.assertEqual(v3_doc.get(self.deleted_field), True)
 
 
 class TestVersionedDataRelation(TestNormalVersioning):
-    def setUp(self):
-        super().setUp()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
 
         # enable versioning in the invoice data_relation definition
         self.enableDataVersionRelation()
 
-        self.enableVersioning()
-        self.insertTestData()
+        await self.enableVersioning()
+        await self.insertTestData()
 
-    def test_referential_integrity(self):
+    async def test_referential_integrity(self):
         """Make sure that Eve correctly validates a data_relation with a
         version and returns the version with the data_relation in the response.
         """
@@ -972,25 +974,25 @@ class TestVersionedDataRelation(TestNormalVersioning):
 
         # must be a dict
         data = {"person": self.item_id}
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assertValidationErrorStatus(status)
         self.assertValidationError(r, {"person": "must be of dict type"})
 
         # must have _id
         data = {"person": {value_field: self.item_id}}
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assertValidationErrorStatus(status)
         self.assertValidationError(r, {"person": validation_error_format})
 
         # must have _version
         data = {"person": {version_field: 1}}
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assertValidationErrorStatus(status)
         self.assertValidationError(r, {"person": validation_error_format})
 
         # bad id format
         data = {"person": {value_field: "bad", version_field: 1}}
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assertValidationErrorStatus(status)
         self.assertValidationError(
             r, {"person": {value_field: "must be of objectid type"}}
@@ -998,7 +1000,7 @@ class TestVersionedDataRelation(TestNormalVersioning):
 
         # unknown id
         data = {"person": {value_field: self.unknown_item_id, version_field: 1}}
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assertValidationErrorStatus(status)
         self.assertValidationError(
             r,
@@ -1011,7 +1013,7 @@ class TestVersionedDataRelation(TestNormalVersioning):
 
         # version doesn't exist
         data = {"person": {value_field: self.item_id, version_field: 2}}
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assertValidationErrorStatus(status)
         self.assertValidationError(
             r,
@@ -1023,7 +1025,7 @@ class TestVersionedDataRelation(TestNormalVersioning):
         )
 
         # put a second version
-        response, status = self.put(
+        response, status = await self.put(
             self.item_id_url,
             data=self.item_change,
             headers=[("If-Match", self.item_etag)],
@@ -1032,10 +1034,10 @@ class TestVersionedDataRelation(TestNormalVersioning):
 
         # reference first version... this should work
         data = {"person": {value_field: self.item_id, version_field: 1}}
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assert201(status)
         # and response should include embedded v1
-        response, status = self.get(
+        response, status = await self.get(
             self.domain["invoices"]["url"],
             item=r[self.id_field],
             query='?embedded={"person": 1}',
@@ -1045,10 +1047,10 @@ class TestVersionedDataRelation(TestNormalVersioning):
 
         # reference second version... this should work
         data = {"person": {value_field: self.item_id, version_field: 2}}
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assert201(status)
         # and response should include embedded v2
-        response, status = self.get(
+        response, status = await self.get(
             self.domain["invoices"]["url"],
             item=r[self.id_field],
             query='?embedded={"person": 1}',
@@ -1056,7 +1058,7 @@ class TestVersionedDataRelation(TestNormalVersioning):
         self.assert200(status)
         self.assertEqual(response["person"].get(version_field), 2)
 
-    def test_embedded(self):
+    async def test_embedded(self):
         """Perform a quick check to make sure that Eve can embedded with a
         version in the data relation.
         """
@@ -1065,12 +1067,12 @@ class TestVersionedDataRelation(TestNormalVersioning):
 
         # add embeddable data relation
         data = {"person": {value_field: self.item_id, self.version_field: 1}}
-        response, status = self.post("/invoices/", data=data)
+        response, status = await self.post("/invoices/", data=data)
         self.assert201(status)
         invoice_id = response[value_field]
 
         # test that it works
-        response, status = self.get(
+        response, status = await self.get(
             self.domain["invoices"]["url"],
             item=invoice_id,
             query='?embedded={"person": 1}',
@@ -1078,11 +1080,11 @@ class TestVersionedDataRelation(TestNormalVersioning):
         self.assert200(status)
         self.assertTrue("ref" in response["person"])
 
-    def test_softdelete_embedded(self):
+    async def test_softdelete_embedded(self):
         """If a versioned embedded document is soft deleted, a previous
         version should still resolve correctly.
         """
-        self.enableSoftDelete()
+        await self.enableSoftDelete()
 
         data_relation = self.domain["invoices"]["schema"]["person"]["data_relation"]
         value_field = data_relation["field"]
@@ -1090,18 +1092,18 @@ class TestVersionedDataRelation(TestNormalVersioning):
 
         # add embeddable data relation
         data = {"person": {value_field: self.item_id, version_field: 1}}
-        response, status = self.post("/invoices/", data=data)
+        response, status = await self.post("/invoices/", data=data)
         self.assert201(status)
         invoice_id = response[value_field]
 
         # soft delete embedded doc
-        response, status = self.delete(
+        response, status = await self.delete(
             self.item_id_url, headers=[("If-Match", self.item_etag)]
         )
         self.assert204(status)
 
         # v1 should still return
-        response, status = self.get(
+        response, status = await self.get(
             self.domain["invoices"]["url"],
             item=invoice_id,
             query='?embedded={"person": 1}',
@@ -1115,16 +1117,16 @@ class TestVersionedDataRelation(TestNormalVersioning):
         self.assertEqual(response["person"].get(self.version_field), 1)
         self.assertEqual(response["person"].get(self.deleted_field), False)
 
-    def test_softdelete_data_relation_validation(self):
+    async def test_softdelete_data_relation_validation(self):
         """Eve validation should not allow a data relation to a soft deleted
         document version. A data relation to an un-deleted version should be
         allowed.
         """
-        self.enableSoftDelete()
+        await self.enableSoftDelete()
 
         # soft delete embeddable document
-        self.enableSoftDelete()
-        response, status = self.delete(
+        await self.enableSoftDelete()
+        response, status = await self.delete(
             self.item_id_url, headers=[("If-Match", self.item_etag)]
         )
         self.assert204(status)
@@ -1135,12 +1137,12 @@ class TestVersionedDataRelation(TestNormalVersioning):
         version_field = self.app.config["VERSION"]
 
         data = {"person": {value_field: self.item_id, version_field: 1}}
-        response, status = self.post("/invoices/", data=data)
+        response, status = await self.post("/invoices/", data=data)
         self.assert201(status)
 
         # saving relation to deleted version 2 should fail
         data = {"person": {value_field: self.item_id, version_field: 2}}
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assertValidationErrorStatus(status)
         self.assertValidationError(
             r,
@@ -1153,22 +1155,22 @@ class TestVersionedDataRelation(TestNormalVersioning):
 
 
 class TestVersionedDataRelationCustomField(TestNormalVersioning):
-    def setUp(self):
-        super().setUp()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
 
         # enable versioning in the invoice data_relation definition with custom
         # relation field
         self.enableDataVersionRelation(custom_field=self.versioned_field)
 
-        self.enableVersioning()
-        self.insertTestData()
+        await self.enableVersioning()
+        await self.insertTestData()
 
-    def test_referential_integrity(self):
+    async def test_referential_integrity(self):
         """Make sure that Eve correctly distinguishes between versions when
         referencing fields that aren't '_id'.
         """
         # put a second version
-        response, status = self.put(
+        response, status = await self.put(
             self.item_id_url,
             data=self.item_change,
             headers=[("If-Match", self.item_etag)],
@@ -1177,7 +1179,7 @@ class TestVersionedDataRelationCustomField(TestNormalVersioning):
 
         # try saving a field from the first version against version 2
         data = {"person": {"ref": self.item["ref"], self.version_field: 2}}
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assertValidationErrorStatus(status)
         self.assertValidationError(
             r,
@@ -1190,10 +1192,10 @@ class TestVersionedDataRelationCustomField(TestNormalVersioning):
 
         # try saving against the first version...this should work
         data = {"person": {"ref": self.item["ref"], self.version_field: 1}}
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assert201(status)
         # and response should include embedded v1
-        response, status = self.get(
+        response, status = await self.get(
             self.domain["invoices"]["url"],
             item=r[self.id_field],
             query='?embedded={"person": 1}',
@@ -1203,8 +1205,8 @@ class TestVersionedDataRelationCustomField(TestNormalVersioning):
 
 
 class TestVersionedDataRelationUnversionedField(TestNormalVersioning):
-    def setUp(self):
-        super().setUp()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
 
         # enable versioning in the invoice data_relation definition with custom
         # unversioned relation field
@@ -1212,15 +1214,15 @@ class TestVersionedDataRelationUnversionedField(TestNormalVersioning):
             custom_field=self.unversioned_field, custom_field_type="integer"
         )
 
-        self.enableVersioning(partial=True)
-        self.insertTestData()
+        await self.enableVersioning(partial=True)
+        await self.insertTestData()
 
-    def test_referential_integrity(self):
+    async def test_referential_integrity(self):
         """Make sure that Eve correctly distinguishes between versions when
         referencing unversioned fields
         """
         # put a second version
-        response, status = self.put(
+        response, status = await self.put(
             self.item_id_url,
             data=self.item_change,
             headers=[("If-Match", self.item_etag)],
@@ -1235,10 +1237,10 @@ class TestVersionedDataRelationUnversionedField(TestNormalVersioning):
                 self.version_field: 1,
             }
         }
-        r, status = self.post("/invoices/", data=data)
+        r, status = await self.post("/invoices/", data=data)
         self.assert201(status)
         # and response should include embedded v1
-        response, status = self.get(
+        response, status = await self.get(
             self.domain["invoices"]["url"],
             item=r[self.id_field],
             query='?embedded={"person": 1}',
@@ -1248,27 +1250,27 @@ class TestVersionedDataRelationUnversionedField(TestNormalVersioning):
 
 
 class TestPartialVersioning(TestNormalVersioning):
-    def setUp(self):
-        super().setUp()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
 
-        self.enableVersioning(partial=True)
-        self.insertTestData()
+        await self.enableVersioning(partial=True)
+        await self.insertTestData()
 
-    def test_get(self):
+    async def test_get(self):
         """Test that get response successfully synthesize the full document
         even with unversioned fields.
         """
-        self.do_test_get()
+        await self.do_test_get()
 
-    def test_getitem(self):
+    async def test_getitem(self):
         """Test that get response can successfully synthesize both old and new
         document versions when partial versioning is in place.
         """
-        self.do_test_getitem(partial=True)
+        await self.do_test_getitem(partial=True)
 
-    def test_post(self):
+    async def test_post(self):
         """Verify that partial version control can happen on POST."""
-        self.do_test_post(partial=True)
+        await self.do_test_post(partial=True)
 
     def test_multi_post(self):
         """Eve literally throws single documents into an array before
@@ -1277,13 +1279,13 @@ class TestPartialVersioning(TestNormalVersioning):
         """
         self.do_test_multi_post()
 
-    def test_put(self):
+    async def test_put(self):
         """Verify that partial version control can happen on PUT."""
-        self.do_test_put(partial=True)
+        await self.do_test_put(partial=True)
 
-    def test_patch(self):
+    async def test_patch(self):
         """Verify that partial version control can happen on PATCH."""
-        self.do_test_patch(partial=True)
+        await self.do_test_patch(partial=True)
 
     def test_version_control_the_unkown(self):
         """Currently, the versioning scheme assumes true unless a field is
@@ -1295,108 +1297,108 @@ class TestPartialVersioning(TestNormalVersioning):
 
 
 class TestLateVersioning(TestVersioningBase):
-    def setUp(self):
-        super().setUp()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
 
         # enable versioning in the invoice data_relation definition
         self.enableDataVersionRelation(embeddable=True)
 
         # turn on version after data has been inserted into the db
-        self.enableVersioning()
+        await self.enableVersioning()
 
-    def test_get(self):
+    async def test_get(self):
         """Make sure that Eve returns version = 1 even for documents that
         haven't been modified since version control has been turned on.
         """
-        response, status = self.get(self.known_resource)
+        response, status = await self.get(self.known_resource)
         self.assert200(status)
         items = response[self.app.config["ITEMS"]]
         self.assertEqual(len(items), self.app.config["PAGINATION_DEFAULT"])
         for item in items:
             self.assertDocumentVersionFields(item, 1)
 
-    def test_getitem(self):
+    async def test_getitem(self):
         """Make sure that Eve returns version = 1 even for documents that
         haven't been modified since version control has been turned on.
         """
-        response, status = self.get(self.known_resource, item=self.item_id)
+        response, status = await self.get(self.known_resource, item=self.item_id)
         self.assert200(status)
         self.assertDocumentVersionFields(response, 1)
 
-    def test_put(self):
+    async def test_put(self):
         """Make sure that Eve jumps to version = 2 and saves two shadow copies
         (version 1 and version 2) for documents that where already in the
         database before version control was turned on.
         """
         # make sure there are no shadow documents
-        self.assertTrue(self.countShadowDocuments() == 0)
+        self.assertTrue((await self.countShadowDocuments()) == 0)
 
         # put a change
         changes = {"ref": "this is a different value"}
-        response, status = self.put(
+        response, status = await self.put(
             self.item_id_url, data=changes, headers=[("If-Match", self.item_etag)]
         )
         self.assertGoodPutPatch(response, status)
         self.assertDocumentVersionFields(response, 2)
 
         # make sure that this saved to the db (if it didn't, version == 1)
-        self.assertTrue(self.countShadowDocuments() == 2)
-        response2, status = self.get(self.known_resource, item=self.item_id)
+        self.assertTrue((await self.countShadowDocuments()) == 2)
+        response2, status = await self.get(self.known_resource, item=self.item_id)
         self.assert200(status)
         self.assertDocumentVersionFields(response2, 2)
         self.assertEqual(response[ETAG], response2[ETAG])
 
-    def test_patch(self):
+    async def test_patch(self):
         """Make sure that Eve jumps to version = 2 and saves two shadow copies
         (version 1 and version 2) for documents that where already in the
         database before version control was turned on.
         """
         # make sure there are no shadow documents
-        self.assertTrue(self.countShadowDocuments() == 0)
+        self.assertTrue((await self.countShadowDocuments()) == 0)
 
         # patch a change
         changes = {"ref": "this is a different value"}
-        response, status = self.patch(
+        response, status = await self.patch(
             self.item_id_url, data=changes, headers=[("If-Match", self.item_etag)]
         )
         self.assertGoodPutPatch(response, status)
         self.assertDocumentVersionFields(response, 2)
 
         # make sure that this saved to the db (if it didn't, version == 1)
-        self.assertTrue(self.countShadowDocuments() == 2)
-        response2, status = self.get(self.known_resource, item=self.item_id)
+        self.assertTrue((await self.countShadowDocuments()) == 2)
+        response2, status = await self.get(self.known_resource, item=self.item_id)
         self.assert200(status)
         self.assertDocumentVersionFields(response2, 2)
         self.assertEqual(response[ETAG], response2[ETAG])
 
-    def test_datasource(self):
+    async def test_datasource(self):
         """Make sure that Eve uses the same mongo collection for storing versions
         when datasource is used."""
         # make sure there are no shadow documents
-        self.assertTrue(self.countShadowDocuments() == 0)
+        self.assertTrue((await self.countShadowDocuments()) == 0)
 
         # patch a change
         changes = {"ref": "this is a different value"}
-        response, status = self.patch(
+        response, status = await self.patch(
             self.item_id_url, data=changes, headers=[("If-Match", self.item_etag)]
         )
         self.assertGoodPutPatch(response, status)
         self.assertDocumentVersionFields(response, 2)
 
         # make sure that this saved to the db (if it didn't, version == 1)
-        self.assertTrue(self.countShadowDocuments() == 2)
+        self.assertTrue((await self.countShadowDocuments()) == 2)
 
         data = {
             self.versioned_field: "ref value 3..............",
             self.unversioned_field: 444,
         }
-        contact, status = self.post(self.known_resource_url, data=data)
+        contact, status = await self.post(self.known_resource_url, data=data)
         self.assert201(status)
 
         # make sure that this is saved to the db in the same collection
-        self.assertEqual(self.countShadowDocuments(), 3)
+        self.assertEqual(await self.countShadowDocuments(), 3)
 
-    def test_delete(self):
+    async def test_delete(self):
         """Verify that we don't throw an error if we delete a resource that is
         supposed to be versioned but whose shadow collection does not exist.
         """
@@ -1404,58 +1406,58 @@ class TestLateVersioning(TestVersioningBase):
         self.domain["contacts"]["datasource"]["filter"] = None
 
         # verify the primary collection exists but the shadow does not
-        self.assertTrue(self.countDocuments() > 0)
-        self.assertTrue(self.countShadowDocuments() == 0)
+        self.assertTrue((await self.countDocuments()) > 0)
+        self.assertTrue((await self.countShadowDocuments()) == 0)
 
         # delete resource and verify no errors
-        response, status = self.delete(self.known_resource_url)
+        response, status = await self.delete(self.known_resource_url)
         self.assert204(status)
 
         # verify that there are 0 documents in both collections
-        self.assertTrue(self.countDocuments() == 0)
-        self.assertTrue(self.countShadowDocuments() == 0)
+        self.assertTrue((await self.countDocuments()) == 0)
+        self.assertTrue((await self.countShadowDocuments()) == 0)
 
-    def test_deleteitem(self):
+    async def test_deleteitem(self):
         """Verify that we don't throw an error if we delete an item that is
         supposed to be versioned but that doesn't have any shadow copies.
         """
         # verify the primary document exists but no shadow documents do
-        self.assertTrue(self.countDocuments(self.item_id) > 0)
-        self.assertTrue(self.countShadowDocuments(self.item_id) == 0)
+        self.assertTrue((await self.countDocuments(self.item_id)) > 0)
+        self.assertTrue((await self.countShadowDocuments(self.item_id)) == 0)
 
         # delete resource and verify no errors
-        response, status = self.delete(
+        response, status = await self.delete(
             self.item_id_url, headers=[("If-Match", self.item_etag)]
         )
         self.assert204(status)
 
         # verify that neither primary or shadow documents exist
-        self.assertTrue(self.countDocuments(self.item_id) == 0)
-        self.assertTrue(self.countShadowDocuments(self.item_id) == 0)
+        self.assertTrue((await self.countDocuments(self.item_id)) == 0)
+        self.assertTrue((await self.countShadowDocuments(self.item_id)) == 0)
 
-    def test_softdelete(self):
+    async def test_softdelete(self):
         """Make sure that Eve jumps to version = 2 and saves two shadow copies
         (version 1 and version 2) for documents that where already in the
         database before version control was turned on.
         """
-        self.enableSoftDelete()
+        await self.enableSoftDelete()
 
         # verify the primary document exists but no shadow documents do
-        self.assertTrue(self.countDocuments(self.item_id) > 0)
-        self.assertTrue(self.countShadowDocuments(self.item_id) == 0)
+        self.assertTrue((await self.countDocuments(self.item_id)) > 0)
+        self.assertTrue((await self.countShadowDocuments(self.item_id)) == 0)
 
         # soft delete resource and verify no errors
-        response, status = self.delete(
+        response, status = await self.delete(
             self.item_id_url, headers=[("If-Match", self.item_etag)]
         )
         self.assert204(status)
 
         # verify that the primary document and two (late caught v1 and deleted
         # v2) shadow documents exist
-        self.assertTrue(self.countDocuments(self.item_id) == 1)
-        self.assertTrue(self.countShadowDocuments(self.item_id) == 2)
+        self.assertTrue((await self.countDocuments(self.item_id)) == 1)
+        self.assertTrue((await self.countShadowDocuments(self.item_id)) == 2)
 
-    def test_referential_integrity(self):
+    async def test_referential_integrity(self):
         """Make sure that Eve doesn't mind doing a data relation even when the
         shadow copy doesn't exist.
         """
@@ -1465,10 +1467,10 @@ class TestLateVersioning(TestVersioningBase):
 
         # verify that Eve will take version = 1 if no shadow docs exist
         data = {"person": {value_field: self.item_id, version_field: 1}}
-        response, status = self.post("/invoices/", data=data)
+        response, status = await self.post("/invoices/", data=data)
         self.assert201(status)
 
-    def test_embedded(self):
+    async def test_embedded(self):
         """Perform a quick check to make sure that Eve can embedded with a
         version in the data relation.
         """
@@ -1478,12 +1480,12 @@ class TestLateVersioning(TestVersioningBase):
 
         # verify that Eve will take version = 1 if no shadow docs exist
         data = {"person": {value_field: self.item_id, version_field: 1}}
-        response, status = self.post("/invoices/", data=data)
+        response, status = await self.post("/invoices/", data=data)
         self.assert201(status)
         invoice_id = response[value_field]
 
         # verify that we can embed across the data_relation w/o shadow copy
-        response, status = self.get(
+        response, status = await self.get(
             self.domain["invoices"]["url"],
             item=invoice_id,
             query='?embedded={"person": 1}',
@@ -1493,12 +1495,12 @@ class TestLateVersioning(TestVersioningBase):
 
 
 class TestVersioningWithCustomIdField(TestNormalVersioning):
-    def setUp(self):
-        super().setUp()
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
         self.domain[self.known_resource]["schema"][self.id_field] = {"type": "string"}
-        self.enableVersioning()
-        self.insertTestData()
+        await self.enableVersioning()
+        await self.insertTestData()
 
-    def test_getitem(self):
+    async def test_getitem(self):
         """Make sure we can insert at least two versioning documents."""
-        self.do_test_getitem(partial=False)
+        await self.do_test_getitem(partial=False)

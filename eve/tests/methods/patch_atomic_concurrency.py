@@ -28,7 +28,7 @@ intentionally wrong ETag.
 """
 
 
-def get_document_simulate_concurrent_update(*args, **kwargs):
+async def get_document_simulate_concurrent_update(*args, **kwargs):
     """
     Hostile version of get_document
 
@@ -36,13 +36,13 @@ def get_document_simulate_concurrent_update(*args, **kwargs):
     eve.methods.patch.patch_internal() during the critical area
     between get_document() and app.data.update()
     """
-    document = eve.methods.common.get_document(*args, **kwargs)
+    document = await eve.methods.common.get_document(*args, **kwargs)
     document[config.ETAG] = "unexpected change!"
     return document
 
 
 class TestPatchAtomicConcurrent(TestBase):
-    def setUp(self):
+    async def asyncSetUp(self):
         """
         Patch eve.methods.patch.get_document with a hostile version
         that simulates simultaneous updates
@@ -51,25 +51,25 @@ class TestPatchAtomicConcurrent(TestBase):
         sys.modules[
             "eve.methods.patch"
         ].get_document = get_document_simulate_concurrent_update
-        return super().setUp()
+        return await super().asyncSetUp()
 
-    def test_etag_changed_after_get_document(self):
+    async def test_etag_changed_after_get_document(self):
         """
         Try to update a document after the ETag was adjusted
         outside this process
         """
         changes = {"ref": "1234567890123456789054321"}
-        _r, status = self.patch(
+        _r, status = await self.patch(
             self.item_id_url, data=changes, headers=[("If-Match", self.item_etag)]
         )
         self.assertEqual(status, 412)
 
-    def tearDown(self):
+    async def asyncTearDown(self):
         """Remove patch of eve.methods.patch.get_document"""
         sys.modules["eve.methods.patch"].get_document = self.original_get_document
-        return super().tearDown()
+        return await super().asyncTearDown()
 
-    def patch(self, url, data, headers=[]):
+    async def patch(self, url, data, headers=[]):
         headers.append(("Content-Type", "application/json"))
-        r = self.test_client.patch(url, data=json.dumps(data), headers=headers)
-        return self.parse_response(r)
+        r = await self.test_client.patch(url, json=data, headers=headers)
+        return await self.parse_response(r)
