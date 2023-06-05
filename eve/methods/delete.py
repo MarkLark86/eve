@@ -12,8 +12,8 @@
 
 import copy
 
-from flask import abort
-from flask import current_app as app
+from quart import abort
+from quart import current_app as app
 
 from eve.auth import requires_auth
 from eve.methods.common import (get_document, oplog_push, pre_event, ratelimit,
@@ -30,7 +30,7 @@ def all_done():
 @ratelimit()
 @requires_auth("item")
 @pre_event
-def deleteitem(resource, **lookup):
+async def deleteitem(resource, **lookup):
     """
     Default function for handling DELETE requests, it has decorators for
     rate limiting, authentication and for raising pre-request events.
@@ -40,10 +40,10 @@ def deleteitem(resource, **lookup):
     .. versionchanged:: 0.5
        Split into deleteitem() and deleteitem_internal().
     """
-    return deleteitem_internal(resource, concurrency_check=True, **lookup)
+    return await deleteitem_internal(resource, concurrency_check=True, **lookup)
 
 
-def deleteitem_internal(
+async def deleteitem_internal(
     resource, concurrency_check=False, suppress_callbacks=False, original=None, **lookup
 ):
     """Intended for internal delete calls, this method is not rate limited,
@@ -91,7 +91,7 @@ def deleteitem_internal(
     """
     resource_def = config.DOMAIN[resource]
     soft_delete_enabled = resource_def["soft_delete"]
-    original = get_document(
+    original = await get_document(
         resource,
         concurrency_check,
         original,
@@ -103,8 +103,8 @@ def deleteitem_internal(
 
     # notify callbacks
     if not suppress_callbacks:
-        getattr(app, "on_delete_item")(resource, original)
-        getattr(app, "on_delete_item_%s" % resource)(original)
+        await getattr(app, "on_delete_item")(resource, original)
+        await getattr(app, "on_delete_item_%s" % resource)(original)
 
     if soft_delete_enabled:
         # Instead of removing the document from the db, just mark it as deleted
@@ -123,17 +123,17 @@ def deleteitem_internal(
         # Update document in database (including version collection if needed)
         id = original[resource_def["id_field"]]
         try:
-            app.data.replace(resource, id, marked_document, original)
+            await app.data.replace(resource, id, marked_document, original)
         except app.data.OriginalChangedError:
             if concurrency_check:
                 abort(412, description="Client and server etags don't match")
 
         # create previous version if it wasn't already there
-        late_versioning_catch(original, resource)
+        await late_versioning_catch(original, resource)
         # and add deleted version
-        insert_versioning_documents(resource, marked_document)
+        await insert_versioning_documents(resource, marked_document)
         # update oplog if needed
-        oplog_push(resource, marked_document, "DELETE", id)
+        await oplog_push(resource, marked_document, "DELETE", id)
 
     else:
         # Delete the document for real
@@ -150,41 +150,41 @@ def deleteitem_internal(
             # get_document() call since it also deals with etag matching, which
             # is still needed. Also, this lookup should never fail.
             # TODO not happy with this hack. Not at all. Is there a better way?
-            original = app.data.find_one_raw(resource, **lookup)
+            original = await app.data.find_one_raw(resource, **lookup)
 
         for field in media_fields:
             if field in original:
                 media_field = original[field]
                 if isinstance(media_field, list):
                     for file_id in media_field:
-                        app.media.delete(file_id, resource)
+                        await app.media.delete(file_id, resource)
                 else:
-                    app.media.delete(original[field], resource)
+                    await app.media.delete(original[field], resource)
 
         id = original[resource_def["id_field"]]
-        app.data.remove(resource, lookup)
+        await app.data.remove(resource, lookup)
 
         # TODO: should attempt to delete version collection even if setting is
         # off
         if app.config["DOMAIN"][resource]["versioning"] is True:
-            app.data.remove(
+            await app.data.remove(
                 resource + config.VERSIONS,
                 {versioned_id_field(resource_def): original[resource_def["id_field"]]},
             )
 
         # update oplog if needed
-        oplog_push(resource, original, "DELETE", id)
+        await oplog_push(resource, original, "DELETE", id)
 
     if not suppress_callbacks:
-        getattr(app, "on_deleted_item")(resource, original)
-        getattr(app, "on_deleted_item_%s" % resource)(original)
+        await getattr(app, "on_deleted_item")(resource, original)
+        await getattr(app, "on_deleted_item_%s" % resource)(original)
 
     return all_done()
 
 
 @requires_auth("resource")
 @pre_event
-def delete(resource, **lookup):
+async def delete(resource, **lookup):
     """Deletes all item of a resource (collection in MongoDB terms). Won't
     drop indexes. Use with caution!
 
@@ -207,20 +207,20 @@ def delete(resource, **lookup):
     """
 
     resource_def = config.DOMAIN[resource]
-    getattr(app, "on_delete_resource")(resource)
-    getattr(app, "on_delete_resource_%s" % resource)()
+    await getattr(app, "on_delete_resource")(resource)
+    await getattr(app, "on_delete_resource_%s" % resource)()
     default_request = ParsedRequest()
     if resource_def["soft_delete"]:
         # get_document should always fetch soft deleted documents from the db
         # callers must handle soft deleted documents
         default_request.show_deleted = True
-    result, _ = app.data.find(resource, default_request, lookup)
-    originals = list(result)
+    result, _ = await app.data.find(resource, default_request, lookup)
+    originals = await result.to_list(None)
     if not originals:
         return all_done()
     # I add new callback as I want the framework to be retro-compatible
-    getattr(app, "on_delete_resource_originals")(resource, originals, lookup)
-    getattr(app, "on_delete_resource_originals_%s" % resource)(originals, lookup)
+    await getattr(app, "on_delete_resource_originals")(resource, originals, lookup)
+    await getattr(app, "on_delete_resource_originals_%s" % resource)(originals, lookup)
     id_field = resource_def["id_field"]
 
     if resource_def["soft_delete"]:
@@ -232,7 +232,7 @@ def delete(resource, **lookup):
             return all_done()
         for document in originals:
             lookup[id_field] = document[id_field]
-            deleteitem_internal(
+            await deleteitem_internal(
                 resource,
                 concurrency_check=False,
                 suppress_callbacks=True,
@@ -244,14 +244,14 @@ def delete(resource, **lookup):
         # deleted by use of this global method (it should be disabled). Media
         # cleanup is handled at the item endpoint by the delete() method
         # (see above).
-        app.data.remove(resource, lookup)
+        await app.data.remove(resource, lookup)
 
         # TODO: should attempt to delete version collection even if setting is
         # off
         if resource_def["versioning"] is True:
-            app.data.remove(resource + config.VERSIONS, lookup)
+            await app.data.remove(resource + config.VERSIONS, lookup)
 
-    getattr(app, "on_deleted_resource")(resource)
-    getattr(app, "on_deleted_resource_%s" % resource)()
+    await getattr(app, "on_deleted_resource")(resource)
+    await getattr(app, "on_deleted_resource_%s" % resource)()
 
     return all_done()

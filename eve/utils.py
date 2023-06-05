@@ -19,8 +19,8 @@ from importlib import import_module
 import werkzeug.exceptions
 from bson import UuidRepresentation
 from bson.json_util import dumps
-from flask import current_app as app
-from flask import request
+from quart import current_app as app
+from quart import request
 from werkzeug.datastructures import MultiDict
 
 import eve
@@ -420,7 +420,7 @@ def debug_error_message(msg):
     return None
 
 
-def validate_filters(where, resource):
+async def validate_filters(where, resource):
     """Report any filter which is not allowed by  `allowed_filters`
 
     :param where: the where clause, as a dict.
@@ -436,7 +436,7 @@ def validate_filters(where, resource):
     operators = getattr(app.data, "operators", set())
     allowed = config.DOMAIN[resource]["allowed_filters"] + list(operators)
 
-    def validate_filter(filter):
+    async def validate_filter(filter):
         for key, value in filter.items():
             if "*" not in allowed:
 
@@ -458,7 +458,7 @@ def validate_filters(where, resource):
                 for v in value:
                     if not isinstance(v, dict):
                         return "operator '%s' expects a list of sub-queries" % key
-                    r = validate_filter(v)
+                    r = await validate_filter(v)
                     if r:
                         return r
             else:
@@ -492,7 +492,7 @@ def validate_filters(where, resource):
                             sub = dict_sub_schema(base_schema)
                             return [sub] if sub is not None else []
 
-                    def recursive_validate_filter(key, value, schema):
+                    async def recursive_validate_filter(key, value, schema):
                         if key not in schema:
                             base_key, _, sub_keys = key.partition(".")
                             if sub_keys and base_key in schema:
@@ -500,7 +500,7 @@ def validate_filters(where, resource):
                                 # sub-fields
                                 sub_schemas = get_sub_schemas(schema[base_key])
                                 for sub_schema in sub_schemas:
-                                    if recursive_validate_filter(
+                                    if await recursive_validate_filter(
                                         sub_keys, value, sub_schema
                                     ):
                                         return True
@@ -508,10 +508,10 @@ def validate_filters(where, resource):
                             return False
                         field_schema = schema.get(key)
                         v = app.validator({key: field_schema})
-                        return v.validate({key: value})
+                        return await v.validate({key: value})
 
                     res_schema = config.DOMAIN[resource]["schema"]
-                    if not recursive_validate_filter(key, value, res_schema):
+                    if not await recursive_validate_filter(key, value, res_schema):
                         return "filter on '%s' is invalid" % key
 
                     return None
@@ -519,7 +519,7 @@ def validate_filters(where, resource):
     if "*" in allowed and not config.VALIDATE_FILTERS:
         return None
 
-    return validate_filter(where)
+    return await validate_filter(where)
 
 
 def auto_fields(resource):

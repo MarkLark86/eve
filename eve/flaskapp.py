@@ -15,10 +15,13 @@ import os
 import sys
 import warnings
 
-from events import Events
-from flask import Flask
+from aievents import Events
+
+from quart import Quart
+from hypercorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope
 from werkzeug.routing import BaseConverter
 from werkzeug.serving import WSGIRequestHandler
+from werkzeug.datastructures import Headers
 
 import eve
 from eve import default_settings
@@ -53,7 +56,7 @@ class RegexConverter(BaseConverter):
         self.regex = items[0]
 
 
-class Eve(Flask, Events):
+class Eve(Quart, Events):
     """The main Eve object. On initialization it will load Eve settings, then
     configure and enable the API endpoints. The API is launched by executing
     the code below:::
@@ -184,21 +187,20 @@ class Eve(Flask, Events):
         if self.config["OPLOG"] is True:
             self._init_oplog()
 
-        # validate and set defaults for each resource
+        self.register_error_handlers()
 
+    async def init_resources(self):
         # Use a snapshot of the DOMAIN setup for iteration so
         # further insertion of versioned resources do not
         # cause a RuntimeError due to the change of size of
         # the dict
         domain_copy = copy.deepcopy(self.config["DOMAIN"])
         for resource, settings in domain_copy.items():
-            self.register_resource(resource, settings)
+            await self.register_resource(resource, settings)
 
         # it seems like both domain_copy and config['DOMAIN']
         # suffered changes at this point, so merge them
         # self.config['DOMAIN'].update(domain_copy)
-
-        self.register_error_handlers()
 
     def run(self, host=None, port=None, debug=None, **options):
         """
@@ -945,7 +947,7 @@ class Eve(Flask, Events):
             methods=["GET", "OPTIONS"],
         )
 
-    def register_resource(self, resource, settings):
+    async def register_resource(self, resource, settings):
         """Registers new resource to the domain.
 
         Under the hood this validates given settings, updates default values
@@ -996,7 +998,7 @@ class Eve(Flask, Events):
             )
 
         # create the mongo db indexes
-        ensure_mongo_indexes(self, resource)
+        await ensure_mongo_indexes(self, resource)
 
         # flask-pymongo compatibility.
         if "MONGO_OPTIONS" in self.config["DOMAIN"]:
@@ -1091,14 +1093,15 @@ class Eve(Flask, Events):
                 methods=["GET", "OPTIONS"],
             )
 
-    def __call__(self, environ, start_response):
+    async def __call__(
+            self, scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
+    ) -> None:
         """If HTTP_X_METHOD_OVERRIDE is included with the request and method
         override is allowed, make sure the override method is returned to Eve
         as the request method, so normal routing and method validation can be
         performed.
         """
-        if self.config["ALLOW_OVERRIDE_HTTP_METHOD"]:
-            environ["REQUEST_METHOD"] = environ.get(
-                "HTTP_X_HTTP_METHOD_OVERRIDE", environ["REQUEST_METHOD"]
-            ).upper()
-        return super().__call__(environ, start_response)
+        if self.config["ALLOW_OVERRIDE_HTTP_METHOD"] and scope["type"] == "http":
+            headers = Headers(scope["headers"])
+            scope["method"] = headers.get("x-http-method-override", scope["method"]).upper()
+        return await super().__call__(scope, receive, send)

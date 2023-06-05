@@ -13,8 +13,8 @@
 from copy import deepcopy
 
 from cerberus.validator import DocumentError
-from flask import abort
-from flask import current_app as app
+from quart import abort
+from quart import current_app as app
 from werkzeug import exceptions
 
 from eve.auth import requires_auth
@@ -32,7 +32,7 @@ from eve.versioning import (insert_versioning_documents, late_versioning_catch,
 @ratelimit()
 @requires_auth("item")
 @pre_event
-def patch(resource, payload=None, **lookup):
+async def patch(resource, payload=None, **lookup):
     """
     Default function for handling PATCH requests, it has decorators for
     rate limiting, authentication and for raising pre-request events.
@@ -41,12 +41,12 @@ def patch(resource, payload=None, **lookup):
     .. versionchanged:: 0.5
        Split into patch() and patch_internal().
     """
-    return patch_internal(
+    return await patch_internal(
         resource, payload, concurrency_check=True, skip_validation=False, **lookup
     )
 
 
-def patch_internal(
+async def patch_internal(
     resource,
     payload=None,
     concurrency_check=False,
@@ -141,9 +141,9 @@ def patch_internal(
        JSON links. Superflous ``response`` container removed.
     """
     if payload is None:
-        payload = payload_()
+        payload = await payload_()
 
-    original = get_document(
+    original = await get_document(
         resource, concurrency_check, mongo_options=mongo_options, **lookup
     )
     if not original:
@@ -156,6 +156,9 @@ def patch_internal(
     validator = app.validator(
         schema, resource=resource, allow_unknown=resource_def["allow_unknown"]
     )
+
+    if validator:
+        await validator.init()
 
     object_id = original[resource_def["id_field"]]
     last_modified = None
@@ -175,7 +178,7 @@ def patch_internal(
         if skip_validation:
             validation = True
         else:
-            validation = validator.validate_update(
+            validation = await validator.validate_update(
                 updates, object_id, original, normalize_document
             )
             updates = validator.document
@@ -184,9 +187,9 @@ def patch_internal(
             # Apply coerced values
 
             # sneak in a shadow copy if it wasn't already there
-            late_versioning_catch(original, resource)
+            await late_versioning_catch(original, resource)
 
-            store_media_files(updates, resource, original)
+            await store_media_files(updates, resource, original)
             resolve_document_version(updates, resource, "PATCH", original)
 
             # some datetime precision magic
@@ -207,8 +210,8 @@ def patch_internal(
             updated = deepcopy(original)
 
             # notify callbacks
-            getattr(app, "on_update")(resource, updates, original)
-            getattr(app, "on_update_%s" % resource)(updates, original)
+            await getattr(app, "on_update")(resource, updates, original)
+            await getattr(app, "on_update_%s" % resource)(updates, original)
 
             if resource_def["merge_nested_documents"]:
                 updates = resolve_nested_documents(updates, updated)
@@ -220,24 +223,24 @@ def patch_internal(
                 # now storing the (updated) ETAG with every document (#453)
                 updates[config.ETAG] = updated[config.ETAG]
             try:
-                app.data.update(resource, object_id, updates, original)
+                await app.data.update(resource, object_id, updates, original)
             except app.data.OriginalChangedError:
                 if concurrency_check:
                     abort(412, description="Client and server etags don't match")
 
             # update oplog if needed
-            oplog_push(resource, updates, "PATCH", object_id)
+            await oplog_push(resource, updates, "PATCH", object_id)
 
-            insert_versioning_documents(resource, updated)
+            await insert_versioning_documents(resource, updated)
 
             # nofity callbacks
-            getattr(app, "on_updated")(resource, updates, original)
-            getattr(app, "on_updated_%s" % resource)(updates, original)
+            await getattr(app, "on_updated")(resource, updates, original)
+            await getattr(app, "on_updated_%s" % resource)(updates, original)
 
             updated.update(updates)
 
             # build the full response document
-            build_response_document(updated, resource, embedded_fields, updated)
+            await build_response_document(updated, resource, embedded_fields, updated)
             response = updated
             if config.IF_MATCH:
                 etag = response[config.ETAG]

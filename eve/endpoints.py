@@ -14,9 +14,9 @@
 import re
 
 from bson import tz_util
-from flask import Response, abort
-from flask import current_app as app
-from flask import request
+from quart import Response, abort
+from quart import current_app as app
+from quart import request
 
 import eve
 from eve.auth import requires_auth, resource_auth
@@ -26,7 +26,7 @@ from eve.render import send_response
 from eve.utils import config, date_to_rfc1123, weak_date
 
 
-def collections_endpoint(**lookup):
+async def collections_endpoint(**lookup):
     """Resource endpoint handler
 
     :param url: the url that led here
@@ -55,19 +55,19 @@ def collections_endpoint(**lookup):
     response = None
     method = request.method
     if method in ("GET", "HEAD"):
-        response = get(resource, lookup)
+        response = await get(resource, lookup)
     elif method == "POST":
-        response = post(resource)
+        response = await post(resource)
     elif method == "DELETE":
-        response = delete(resource, lookup)
+        response = await delete(resource, lookup)
     elif method == "OPTIONS":
-        send_response(resource, response)
+        await send_response(resource, response)
     else:
         abort(405)
-    return send_response(resource, response)
+    return await send_response(resource, response)
 
 
-def item_endpoint(**lookup):
+async def item_endpoint(**lookup):
     """Item endpoint handler
 
     :param url: the url that led here
@@ -93,23 +93,23 @@ def item_endpoint(**lookup):
     response = None
     method = request.method
     if method in ("GET", "HEAD"):
-        response = getitem(resource, **lookup)
+        response = await getitem(resource, **lookup)
     elif method == "PATCH":
-        response = patch(resource, **lookup)
+        response = await patch(resource, **lookup)
     elif method == "PUT":
-        response = put(resource, **lookup)
+        response = await put(resource, **lookup)
     elif method == "DELETE":
-        response = deleteitem(resource, **lookup)
+        response = await deleteitem(resource, **lookup)
     elif method == "OPTIONS":
-        send_response(resource, response)
+        await send_response(resource, response)
     else:
         abort(405)
-    return send_response(resource, response)
+    return await send_response(resource, response)
 
 
 @ratelimit()
 @requires_auth("home")
-def home_endpoint():
+async def home_endpoint():
     """Home/API entry point. Will provide links to each available resource
 
     .. versionchanged:: 0.5
@@ -155,11 +155,11 @@ def home_endpoint():
             )
 
         response[config.LINKS] = {"child": links}
-        return send_response(None, (response,))
-    return send_response(None, (response,))
+        return await send_response(None, (response,))
+    return await send_response(None, (response,))
 
 
-def error_endpoint(error):
+async def error_endpoint(error):
     """Response returned when an error is raised by the API (e.g. my means of
     an abort(4xx).
     """
@@ -180,7 +180,7 @@ def error_endpoint(error):
         config.STATUS: config.STATUS_ERR,
         config.ERROR: {"code": error.code, "message": error.description},
     }
-    return send_response(None, (response, None, None, error.code, headers))
+    return await send_response(None, (response, None, None, error.code, headers))
 
 
 def _resource():
@@ -188,16 +188,16 @@ def _resource():
 
 
 @requires_auth("media")
-def media_endpoint(_id):
+async def media_endpoint(_id):
     """This endpoint is active when RETURN_MEDIA_AS_URL is True. It retrieves
     a media file and streams it to the client.
 
     .. versionadded:: 0.6
     """
     if request.method == "OPTIONS":
-        return send_response(None, (None))
+        return await send_response(None, (None))
 
-    file_ = app.media.get(_id)
+    file_ = await app.media.get(_id)
     if file_ is None:
         return abort(404)
 
@@ -226,7 +226,7 @@ def media_endpoint(_id):
 
         file_.seek(begin)
 
-        data = file_.read(length)
+        data = await file_.read(length)
         headers["Content-Range"] = "bytes {0}-{1}/{2}".format(
             begin, begin + length - 1, size
         )
@@ -240,21 +240,27 @@ def media_endpoint(_id):
                 return Response(status=304)
 
         data = file_
+        # TODO: Convert response to async stream generator response instead
+        if hasattr(data, "seek"):
+            data.seek(0)
+        data = await data.read()
         status = 200
+
+    if hasattr(data, "seek"):
+        data.seek(0)
 
     response = Response(
         data,
         status=status,
         headers=headers,
         mimetype=file_.content_type,
-        direct_passthrough=True,
     )
 
-    return send_response(None, (response,))
+    return await send_response(None, (response,))
 
 
 @requires_auth("resource")
-def schema_item_endpoint(resource):
+async def schema_item_endpoint(resource):
     """This endpoint is active when SCHEMA_ENDPOINT != None. It returns the
     requested resource's schema definition in JSON format.
     """
@@ -262,11 +268,11 @@ def schema_item_endpoint(resource):
     if not resource_config or resource_config.get("internal_resource") is True:
         return abort(404)
 
-    return send_response(None, (resource_config["schema"],))
+    return await send_response(None, (resource_config["schema"],))
 
 
 @requires_auth("home")
-def schema_collection_endpoint():
+async def schema_collection_endpoint():
     """This endpoint is active when SCHEMA_ENDPOINT != None. It returns the
     schema definition for all public or request authenticated resources in
     JSON format.
@@ -285,9 +291,9 @@ def schema_collection_endpoint():
         if auth and request.method not in resource_config["public_methods"]:
             roles = list(resource_config["allowed_roles"])
             roles += resource_config["allowed_read_roles"]
-            if not auth.authorized(roles, resource_name, request.method):
+            if not await auth.authorized(roles, resource_name, request.method):
                 continue
         # otherwise include this resource in domain wide schema response
         schemas[resource_name] = resource_config["schema"]
 
-    return send_response(None, (schemas,))
+    return await send_response(None, (schemas,))

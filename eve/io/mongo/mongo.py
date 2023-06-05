@@ -20,7 +20,7 @@ import pymongo
 import simplejson as json
 from bson import ObjectId, decimal128
 from bson.dbref import DBRef
-from flask import abort, g, request
+from quart import abort, g, request
 from pymongo import WriteConcern
 from werkzeug.exceptions import HTTPException
 
@@ -137,7 +137,7 @@ class Mongo(DataLayer):
         self.driver = PyMongos(self)
         self.mongo_prefix = None
 
-    def find(self, resource, req, sub_resource_lookup, perform_count=True):
+    async def find(self, resource, req, sub_resource_lookup, perform_count=True):
         """Retrieves a set of documents matching a given request. Queries can
         be expressed in two different formats: the mongo query syntax, and the
         python syntax. The first kind of query would look like: ::
@@ -217,7 +217,7 @@ class Mongo(DataLayer):
         client_sort = self._convert_sort_request_to_dict(req)
         spec = self._convert_where_request_to_dict(resource, req)
 
-        bad_filter = validate_filters(spec, resource)
+        bad_filter = await validate_filters(spec, resource)
         if bad_filter:
             abort(400, bad_filter)
 
@@ -266,7 +266,14 @@ class Mongo(DataLayer):
 
         if perform_count:
             try:
-                count = target.count_documents(spec)
+                count_kwargs = {}
+
+                if args.get("limit"):
+                    count_kwargs["limit"] = args["limit"]
+                if args.get("skip"):
+                    count_kwargs["skip"] = args["skip"]
+
+                count = await target.count_documents(spec, **count_kwargs)
             except Exception:
                 # fallback to deprecated method. this might happen when the query
                 # includes operators not supported by count_documents(). one
@@ -280,13 +287,13 @@ class Mongo(DataLayer):
                 # 4. Mongo 3.4; $expr: fail (operator not supported by db)
 
                 # See: http://api.mongodb.com/python/current/api/pymongo/collection.html#pymongo.collection.Collection.count
-                count = target.count()
+                count = await target.count()
         else:
             count = None
 
         return result, count
 
-    def find_one(
+    async def find_one(
         self,
         resource,
         req,
@@ -344,12 +351,12 @@ class Mongo(DataLayer):
         # Here, we feed pymongo with `None` if projection is empty.
         target = self.pymongo(resource).db[datasource]
         if mongo_options:
-            return target.with_options(**mongo_options).find_one(
+            return await target.with_options(**mongo_options).find_one(
                 filter_, projection or None
             )
-        return target.find_one(filter_, projection or None)
+        return await target.find_one(filter_, projection or None)
 
-    def find_one_raw(self, resource, **lookup):
+    async def find_one_raw(self, resource, **lookup):
         """Retrieves a single raw document.
 
         :param resource: resource name.
@@ -366,9 +373,9 @@ class Mongo(DataLayer):
 
         lookup = self._mongotize(lookup, resource)
 
-        return self.pymongo(resource).db[datasource].find_one(lookup)
+        return await self.pymongo(resource).db[datasource].find_one(lookup)
 
-    def find_list_of_ids(self, resource, ids, client_projection=None):
+    async def find_list_of_ids(self, resource, ids, client_projection=None):
         """Retrieves a list of documents from the collection given
         by `resource`, matching the given list of ids.
 
@@ -412,14 +419,15 @@ class Mongo(DataLayer):
         # projection of {} return all fields in MongoDB, but
         # pymongo will only return `_id`. It's a design flaw upstream.
         # Here, we feed pymongo with `None` if projection is empty.
-        documents = (
+        documents = await (
             self.pymongo(resource)
             .db[datasource]
             .find(filter=spec, projection=(projection or None))
+            .to_list(None)
         )
         return documents
 
-    def aggregate(self, resource, pipeline, options):
+    async def aggregate(self, resource, pipeline, options):
         """
         .. versionadded:: 0.7
         """
@@ -428,7 +436,7 @@ class Mongo(DataLayer):
 
         return self.pymongo(resource).db[datasource].aggregate(challenge, **options)
 
-    def insert(self, resource, doc_or_docs):
+    async def insert(self, resource, doc_or_docs):
         """Inserts a document into a resource collection.
 
         .. versionchanged:: 0.6.1
@@ -459,7 +467,7 @@ class Mongo(DataLayer):
             doc_or_docs = [doc_or_docs]
 
         try:
-            return coll.insert_many(doc_or_docs, ordered=True).inserted_ids
+            return (await coll.insert_many(doc_or_docs, ordered=True)).inserted_ids
         except pymongo.errors.BulkWriteError as e:
             self.app.logger.exception(e)
 
@@ -490,7 +498,7 @@ class Mongo(DataLayer):
                 ),
             )
 
-    def _change_request(self, resource, id_, changes, original, replace=False):
+    async def _change_request(self, resource, id_, changes, original, replace=False):
         """Performs a change, be it a replace or update.
 
         .. versionchanged:: 0.8.2
@@ -512,7 +520,7 @@ class Mongo(DataLayer):
 
         coll = self.get_collection_with_write_concern(datasource, resource)
         try:
-            result = (
+            result = await (
                 coll.replace_one(filter_, changes)
                 if replace
                 else coll.update_one(filter_, changes)
@@ -533,7 +541,7 @@ class Mongo(DataLayer):
             )
         except (pymongo.errors.WriteError, pymongo.errors.OperationFailure) as e:
             # server error codes and messages changed between 2.4 and 2.6/3.0.
-            server_version = self.driver.db.client.server_info()["version"][:3]
+            server_version = (await self.driver.db.client.server_info())["version"][:3]
             if (server_version == "2.4" and e.code in (13596, 10148)) or e.code in (
                 66,
                 16837,
@@ -560,7 +568,7 @@ class Mongo(DataLayer):
                     ),
                 )
 
-    def update(self, resource, id_, updates, original):
+    async def update(self, resource, id_, updates, original):
         """Updates a collection document.
         .. versionchanged:: 0.6
            Support for multiple databases.
@@ -592,9 +600,9 @@ class Mongo(DataLayer):
            retrieves the target collection via the new config.SOURCES helper.
         """
 
-        return self._change_request(resource, id_, {"$set": updates}, original)
+        return await self._change_request(resource, id_, {"$set": updates}, original)
 
-    def replace(self, resource, id_, document, original):
+    async def replace(self, resource, id_, document, original):
         """Replaces an existing document.
         .. versionchanged:: 0.6
            Support for multiple databases.
@@ -613,9 +621,9 @@ class Mongo(DataLayer):
         .. versionadded:: 0.1.0
         """
 
-        return self._change_request(resource, id_, document, original, replace=True)
+        return await self._change_request(resource, id_, document, original, replace=True)
 
-    def remove(self, resource, lookup):
+    async def remove(self, resource, lookup):
         """Removes a document or the entire set of documents from a
         collection.
 
@@ -656,7 +664,7 @@ class Mongo(DataLayer):
 
         coll = self.get_collection_with_write_concern(datasource, resource)
         try:
-            coll.delete_many(filter_)
+            await coll.delete_many(filter_)
         except pymongo.errors.OperationFailure as e:
             # see comment in :func:`insert()`.
             self.app.logger.exception(e)
@@ -746,7 +754,7 @@ class Mongo(DataLayer):
             return False
         return True
 
-    def is_empty(self, resource):
+    async def is_empty(self, resource):
         """Returns True if resource is empty; False otherwise. If there is
         no predefined filter on the resource we're relying on the
         db.collection.count_documents. However, if we do have a predefined
@@ -764,7 +772,7 @@ class Mongo(DataLayer):
             if not filter_:
                 # faster, but we can only afford it if there's now predefined
                 # filter on the datasource.
-                return coll.count_documents({}) == 0
+                return (await coll.count_documents({})) == 0
             # fallback on find() since we have a filter to apply.
             try:
                 # need to check if the whole resultset is missing, no
@@ -772,7 +780,7 @@ class Mongo(DataLayer):
                 del filter_[config.LAST_UPDATED]
             except Exception:
                 pass
-            return coll.count_documents(filter_) == 0
+            return (await coll.count_documents(filter_)) == 0
         except pymongo.errors.OperationFailure as e:
             # see comment in :func:`insert()`.
             self.app.logger.exception(e)
@@ -1096,7 +1104,7 @@ class PyMongos(dict):
         return self.mongo.pymongo().db
 
 
-def ensure_mongo_indexes(app, resource):
+async def ensure_mongo_indexes(app, resource):
     """Make sure 'mongo_indexes' is respected and mongo indexes are created on
     the current database.
 
@@ -1113,10 +1121,10 @@ def ensure_mongo_indexes(app, resource):
             list_of_keys = value
             index_options = {}
 
-        _create_index(app, resource, name, list_of_keys, index_options)
+        await _create_index(app, resource, name, list_of_keys, index_options)
 
 
-def _create_index(app, resource, name, list_of_keys, index_options):
+async def _create_index(app, resource, name, list_of_keys, index_options):
     """Create a specific index composed of the `list_of_keys` for the
     mongo collection behind the `resource` using the `app.config`
     to retrieve all data needed to find out the mongodb configuration.
@@ -1155,7 +1163,7 @@ def _create_index(app, resource, name, list_of_keys, index_options):
     except Exception:
         px = app.config["DOMAIN"][resource].get("mongo_prefix", "MONGO")
 
-    with app.app_context():
+    async with app.app_context():
         db = app.data.pymongo(resource, px).db
 
     kw = copy(index_options)
@@ -1167,7 +1175,7 @@ def _create_index(app, resource, name, list_of_keys, index_options):
 
     for coll in colls:
         try:
-            coll.create_index(list_of_keys, **kw)
+            await coll.create_index(list_of_keys, **kw)
         except pymongo.errors.OperationFailure as e:
             if e.code in (85, 86):
                 # raised when the definition of the index has been changed.
@@ -1175,7 +1183,7 @@ def _create_index(app, resource, name, list_of_keys, index_options):
 
                 # by default, drop the old index with old configuration and
                 # create the index again with the new configuration.
-                coll.drop_index(name)
-                coll.create_index(list_of_keys, **kw)
+                await coll.drop_index(name)
+                await coll.create_index(list_of_keys, **kw)
             else:
                 raise

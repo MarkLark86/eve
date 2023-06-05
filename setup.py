@@ -13,16 +13,18 @@ with io.open("eve/__init__.py", "rt", encoding="utf8") as f:
     VERSION = re.search(r"__version__ = \"(.*?)\"", f.read()).group(1)
 
 INSTALL_REQUIRES = [
-    "cerberus>=1.1,<2.0",
-    "events>=0.3,<0.4",
-    "flask",
-    "pymongo",
+    # "cerberus>=1.1,<2.0",
+    "cerberus @ git+https://github.com/MarkLark86/cerberus.git@async",
+    "asyncio-events>=0.1,<0.2",
+    "quart>=0.18.4,<=0.19",
+    "motor>=3.1.2,<4.0",
     "simplejson>=3.3.0,<4.0",
+    "asyncstdlib>=3.10,<4",
 ]
 
 EXTRAS_REQUIRE = {
     "docs": ["sphinx", "alabaster", "doc8"],
-    "tests": ["redis", "testfixtures", "pytest", "tox"],
+    "tests": ["redis", "testfixtures", "pytest", "tox", "pytest-asyncio"],
 }
 EXTRAS_REQUIRE["dev"] = EXTRAS_REQUIRE["tests"] + EXTRAS_REQUIRE["docs"]
 

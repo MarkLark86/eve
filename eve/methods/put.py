@@ -11,8 +11,8 @@
 """
 
 from cerberus.validator import DocumentError
-from flask import abort
-from flask import current_app as app
+from quart import abort
+from quart import current_app as app
 from werkzeug import exceptions
 
 from eve.auth import auth_field_and_value, requires_auth
@@ -33,7 +33,7 @@ from eve.versioning import (insert_versioning_documents, late_versioning_catch,
 @ratelimit()
 @requires_auth("item")
 @pre_event
-def put(resource, payload=None, **lookup):
+async def put(resource, payload=None, **lookup):
     """
     Default function for handling PUT requests, it has decorators for
     rate limiting, authentication and for raising pre-request events.
@@ -42,12 +42,12 @@ def put(resource, payload=None, **lookup):
     .. versionchanged:: 0.5
        Split into put() and put_internal().
     """
-    return put_internal(
+    return await put_internal(
         resource, payload, concurrency_check=True, skip_validation=False, **lookup
     )
 
 
-def put_internal(
+async def put_internal(
     resource, payload=None, concurrency_check=False, skip_validation=False, **lookup
 ):
     """Intended for internal put calls, this method is not rate limited,
@@ -118,14 +118,17 @@ def put_internal(
         schema, resource=resource, allow_unknown=resource_def["allow_unknown"]
     )
 
+    if validator:
+        await validator.init()
+
     if payload is None:
-        payload = payload_()
+        payload = await payload_()
 
     # Retrieve the original document without checking user-restricted access,
     # but returning the document owner in the projection. This allows us to
     # prevent PUT if the document exists, but is owned by a different user
     # than the currently authenticated one.
-    original = get_document(
+    original = await get_document(
         resource,
         concurrency_check,
         check_auth_value=False,
@@ -140,7 +143,7 @@ def put_internal(
             if schema[resource_def["id_field"]].get("type", "") == "objectid":
                 id = str(id)
             payload[resource_def["id_field"]] = id
-            return post_internal(resource, payl=payload)
+            return await post_internal(resource, payl=payload)
         abort(404)
 
     # If the document exists, but is owned by someone else, return
@@ -168,13 +171,13 @@ def put_internal(
         if skip_validation:
             validation = True
         else:
-            validation = validator.validate_replace(document, object_id, original)
+            validation = await validator.validate_replace(document, object_id, original)
             # Apply coerced values
             document = validator.document
 
         if validation:
             # sneak in a shadow copy if it wasn't already there
-            late_versioning_catch(original, resource)
+            await late_versioning_catch(original, resource)
 
             # update meta
             last_modified = utcnow()
@@ -193,33 +196,33 @@ def put_internal(
                 document[resource_def["id_field"]] = object_id
 
             resolve_user_restricted_access(document, resource)
-            store_media_files(document, resource, original)
+            await store_media_files(document, resource, original)
             resolve_document_version(document, resource, "PUT", original)
 
             # notify callbacks
-            getattr(app, "on_replace")(resource, document, original)
-            getattr(app, "on_replace_%s" % resource)(document, original)
+            await getattr(app, "on_replace")(resource, document, original)
+            await getattr(app, "on_replace_%s" % resource)(document, original)
 
             resolve_document_etag(document, resource)
 
             # write to db
             try:
-                app.data.replace(resource, object_id, document, original)
+                await app.data.replace(resource, object_id, document, original)
             except app.data.OriginalChangedError:
                 if concurrency_check:
                     abort(412, description="Client and server etags don't match")
 
             # update oplog if needed
-            oplog_push(resource, document, "PUT")
+            await oplog_push(resource, document, "PUT")
 
-            insert_versioning_documents(resource, document)
+            await insert_versioning_documents(resource, document)
 
             # notify callbacks
-            getattr(app, "on_replaced")(resource, document, original)
-            getattr(app, "on_replaced_%s" % resource)(document, original)
+            await getattr(app, "on_replaced")(resource, document, original)
+            await getattr(app, "on_replaced_%s" % resource)(document, original)
 
             # build the full response document
-            build_response_document(document, resource, embedded_fields, document)
+            await build_response_document(document, resource, embedded_fields, document)
             response = document
             if config.IF_MATCH:
                 etag = response[config.ETAG]

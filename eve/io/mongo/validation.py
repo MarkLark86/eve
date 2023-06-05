@@ -13,7 +13,7 @@
 """
 from bson import ObjectId, decimal128
 from bson.dbref import DBRef
-from flask import current_app as app
+from quart import current_app as app
 from werkzeug.datastructures import FileStorage
 
 from eve.auth import auth_field_and_value
@@ -56,7 +56,7 @@ class Validator(Validator):
         """{'type': 'boolean'}"""
         pass
 
-    def _validate_unique_to_user(self, unique, field, value):
+    async def _validate_unique_to_user(self, unique, field, value):
         """{'type': 'boolean'}"""
         auth_field, auth_value = auth_field_and_value(self.resource)
 
@@ -64,20 +64,20 @@ class Validator(Validator):
         # taken into account when checking for value uniqueness.
         query = {auth_field: auth_value} if auth_field else {}
 
-        self._is_value_unique(unique, field, value, query)
+        await self._is_value_unique(unique, field, value, query)
 
-    def _validate_unique_within_resource(self, unique, field, value):
+    async def _validate_unique_within_resource(self, unique, field, value):
         """{'type': 'boolean'}"""
         _, filter_, _, _ = app.data.datasource(self.resource)
         if filter_ is None:
             filter_ = {}
-        self._is_value_unique(unique, field, value, filter_)
+        await self._is_value_unique(unique, field, value, filter_)
 
-    def _validate_unique(self, unique, field, value):
+    async def _validate_unique(self, unique, field, value):
         """{'type': 'boolean'}"""
-        self._is_value_unique(unique, field, value, {})
+        await self._is_value_unique(unique, field, value, {})
 
-    def _is_value_unique(self, unique, field, value, query):
+    async def _is_value_unique(self, unique, field, value, query):
         """Validates that a field value is unique.
 
         .. versionchanged:: 0.6.2
@@ -135,10 +135,10 @@ class Validator(Validator):
             # are still operating within eve's mongo namespace anyway.
 
             datasource, _, _, _ = app.data.datasource(self.resource)
-            if app.data.driver.db[datasource].find_one(query):
+            if await app.data.driver.db[datasource].find_one(query):
                 self._error(field, "value '%s' is not unique" % value)
 
-    def _validate_data_relation(self, data_relation, field, value):
+    async def _validate_data_relation(self, data_relation, field, value):
         """{'type': 'dict',
         'schema': {
            'resource': {'type': 'string', 'required': True},
@@ -168,7 +168,7 @@ class Validator(Validator):
                         % data_relation["resource"],
                     )
                 else:
-                    search = get_data_version_relation_document(data_relation, value)
+                    search = await get_data_version_relation_document(data_relation, value)
 
                     if not search:
                         self._error(
@@ -197,7 +197,7 @@ class Validator(Validator):
                 query = {
                     data_relation["field"]: item.id if isinstance(item, DBRef) else item
                 }
-                if not app.data.find_one(data_resource, None, **query):
+                if not await app.data.find_one(data_resource, None, **query):
                     self._error(
                         field,
                         "value '%s' must exist in resource"

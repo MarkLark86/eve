@@ -14,14 +14,13 @@
 
 import copy
 
-import cerberus
-import cerberus.errors
-from cerberus import DocumentError, SchemaError  # noqa
+from cerberus.errors import BasicErrorHandler
+from cerberus.validator import DocumentError, SchemaError, Validator as _Validator  # noqa
 
 from eve.utils import config
 
 
-class Validator(cerberus.Validator):
+class Validator(_Validator):
     def __init__(self, *args, **kwargs):
         if not config.VALIDATION_ERROR_AS_LIST:
             kwargs["error_handler"] = SingleErrorAsStringErrorHandler
@@ -29,7 +28,7 @@ class Validator(cerberus.Validator):
         self.is_update_operation = False
         super().__init__(*args, **kwargs)
 
-    def validate_update(
+    async def validate_update(
         self, document, document_id, persisted_document=None, normalize_document=True
     ):
         """Validate method to be invoked when performing an update, not an
@@ -43,11 +42,11 @@ class Validator(cerberus.Validator):
         self.is_update_operation = True
         self.document_id = document_id
         self.persisted_document = persisted_document
-        return super().validate(
+        return await super().validate(
             document, update=True, normalize=normalize_document
         )
 
-    def validate_replace(self, document, document_id, persisted_document=None):
+    async def validate_replace(self, document, document_id, persisted_document=None):
         """Validation method to be invoked when performing a document
         replacement. This differs from :func:`validation_update` since in this
         case we want to perform a full :func:`validate` (the new document is to
@@ -63,7 +62,7 @@ class Validator(cerberus.Validator):
         """
         self.document_id = document_id
         self.persisted_document = persisted_document
-        return super().validate(document)
+        return await super().validate(document)
 
     def _normalize_default(self, mapping, schema, field):
         """{'nullable': True}"""
@@ -97,7 +96,7 @@ class Validator(cerberus.Validator):
         if not self.persisted_document or field not in self.persisted_document:
             super()._normalize_default_setter(mapping, schema, field)
 
-    def _validate_dependencies(self, dependencies, field, value):
+    async def _validate_dependencies(self, dependencies, field, value):
         """{'type': ['dict', 'hashable', 'list']}"""
         persisted = self._filter_persisted_fields_not_in_document(dependencies)
         if persisted:
@@ -105,7 +104,7 @@ class Validator(cerberus.Validator):
             for field in persisted:
                 dcopy[field] = self.persisted_document[field]
             validator = self._get_child_validator()
-            validator.validate(dcopy, update=self.update)
+            await validator.validate(dcopy, update=self.update)
             self._error(validator._errors)
         else:
             super()._validate_dependencies(dependencies, field, value)
@@ -153,7 +152,7 @@ class Validator(cerberus.Validator):
         self._config["persisted_document"] = value
 
 
-class SingleErrorAsStringErrorHandler(cerberus.errors.BasicErrorHandler):
+class SingleErrorAsStringErrorHandler(BasicErrorHandler):
     """Default Cerberus error handler for Eve.
 
     Since Cerberus 1.0, error messages for fields will always be returned as

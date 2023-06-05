@@ -1,5 +1,5 @@
-from flask import abort
-from flask import current_app as app
+from quart import abort
+from quart import current_app as app
 from werkzeug.exceptions import BadRequestKeyError
 
 from eve.utils import ParsedRequest, config, debug_error_message
@@ -79,7 +79,7 @@ def resolve_document_version(document, resource, method, latest_doc=None):
                 document[version] = 1
 
 
-def late_versioning_catch(document, resource):
+async def late_versioning_catch(document, resource):
     """Insert versioning copy of document for the previous version of a
     document if it is missing. Intended for PUT and PATCH.
 
@@ -102,10 +102,10 @@ def late_versioning_catch(document, resource):
             # document was added to the database, so let's add this old version
             # to the shadow collection now as if it was a new document.
             resolve_document_version(document, resource, "POST")
-            insert_versioning_documents(resource, document)
+            await insert_versioning_documents(resource, document)
 
 
-def insert_versioning_documents(resource, documents):
+async def insert_versioning_documents(resource, documents):
     """Insert versioning copy of document. Intended for POST, PUT, and PATCH.
 
     :param resource: the resource of the request/document.
@@ -157,7 +157,7 @@ def insert_versioning_documents(resource, documents):
 
         # bulk insert
         versionable_resource_name = resource + app.config["VERSIONS"]
-        app.data.insert(versionable_resource_name, versioned_documents)
+        await app.data.insert(versionable_resource_name, versioned_documents)
 
 
 def versioned_fields(resource_def):
@@ -270,7 +270,7 @@ def synthesize_versioned_document(document, delta, resource_def):
     return versioned_doc
 
 
-def get_old_document(resource, req, lookup, document, version):
+async def get_old_document(resource, req, lookup, document, version):
     """Returns an old document if appropriate, otherwise returns a shallow
     copy of the given document.
 
@@ -306,7 +306,7 @@ def get_old_document(resource, req, lookup, document, version):
         lookup[config.VERSION] = version
 
         # synthesize old document from latest and delta
-        delta = app.data.find_one(resource + config.VERSIONS, req, **lookup)
+        delta = await app.data.find_one(resource + config.VERSIONS, req, **lookup)
         if not delta:
             abort(404)
         old_document = synthesize_versioned_document(document, delta, resource_def)
@@ -318,7 +318,7 @@ def get_old_document(resource, req, lookup, document, version):
     return old_document
 
 
-def get_data_version_relation_document(data_relation, reference, latest=False):
+async def get_data_version_relation_document(data_relation, reference, latest=False):
     """Returns document at the version specified in data_relation, or at the
     latest version if passed `latest=True`. Returns None if data_relation
     cannot be satisfied.
@@ -347,7 +347,7 @@ def get_data_version_relation_document(data_relation, reference, latest=False):
         req = ParsedRequest()
         if resource_def["soft_delete"]:
             req.show_deleted = True
-        latest_version = app.data.find_one(
+        latest_version = await app.data.find_one(
             collection, req, **{value_field: reference[value_field]}
         )
         if not latest_version:
@@ -357,13 +357,13 @@ def get_data_version_relation_document(data_relation, reference, latest=False):
         # Field will be present in the versioned collection
         query[value_field] = reference[value_field]
 
-    referenced_version = app.data.find_one(versioned_collection, None, **query)
+    referenced_version = await app.data.find_one(versioned_collection, None, **query)
 
     # support late versioning
     if referenced_version is None and reference[version_field] == 1:
         # there is a chance this document hasn't been saved
         # since versioning was turned on
-        referenced_version = missing_version_field(data_relation, reference)
+        referenced_version = await missing_version_field(data_relation, reference)
         return referenced_version  # v1 is both referenced and latest
 
     if referenced_version is None:
@@ -376,7 +376,7 @@ def get_data_version_relation_document(data_relation, reference, latest=False):
         # Still return latest after soft delete. It is needed to synthesize
         # full document version.
         req.show_deleted = True
-    latest_version = app.data.find_one(collection, req, **query)
+    latest_version = await app.data.find_one(collection, req, **query)
     if latest is True:
         return latest_version
 
@@ -387,7 +387,7 @@ def get_data_version_relation_document(data_relation, reference, latest=False):
     return document
 
 
-def missing_version_field(data_relation, reference):
+async def missing_version_field(data_relation, reference):
     """Returns a document if it matches the value_field but doesn't have a
     _version field. This is the scenario when there is data in the database
     before document versioning is turned on.
@@ -404,4 +404,4 @@ def missing_version_field(data_relation, reference):
     query[value_field] = reference[value_field]
     query[version_field] = {"$exists": False}
 
-    return app.data.find_one(collection, None, **query)
+    return await app.data.find_one(collection, None, **query)

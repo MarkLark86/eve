@@ -14,11 +14,12 @@ from __future__ import division
 
 import copy
 import math
+import asyncstdlib
 
 import simplejson as json
-from flask import abort
-from flask import current_app as app
-from flask import request
+from quart import abort
+from quart import current_app as app
+from quart import request
 from werkzeug.datastructures import MultiDict
 
 from eve.auth import requires_auth
@@ -34,7 +35,7 @@ from .common import (build_response_document, document_link, epoch,
 @ratelimit()
 @requires_auth("resource")
 @pre_event
-def get(resource, **lookup):
+async def get(resource, **lookup):
     """
     Default function for handling GET requests, it has decorators for
     rate limiting, authentication and for raising pre-request events. After the
@@ -42,10 +43,10 @@ def get(resource, **lookup):
 
     .. versionadded:: 0.6.2
     """
-    return get_internal(resource, **lookup)
+    return await get_internal(resource, **lookup)
 
 
-def get_internal(resource, **lookup):
+async def get_internal(resource, **lookup):
     """Retrieves the resource documents that match the current request.
 
     :param resource: the name of the resource.
@@ -112,13 +113,14 @@ def get_internal(resource, **lookup):
     aggregation = datasource.get("aggregation")
 
     if aggregation:
-        return _perform_aggregation(
+        return await _perform_aggregation(
             resource, aggregation["pipeline"], aggregation["options"]
         )
-    return _perform_find(resource, lookup)
+
+    return await _perform_find(resource, lookup)
 
 
-def _perform_aggregation(resource, pipeline, options):
+async def _perform_aggregation(resource, pipeline, options):
     """
     .. versionadded:: 0.7
     """
@@ -206,19 +208,19 @@ def _perform_aggregation(resource, pipeline, options):
 
     facet = {"$facet": facet_pipelines}
 
-    getattr(app, "before_aggregation")(resource, req_pipeline_pruned)
+    await getattr(app, "before_aggregation")(resource, req_pipeline_pruned)
 
     # Appending $facet afer the before_aggregation hook allows for
     # easy modification of the orginal pipline, however, pagination
     # (skip, limit) cannot be accessed.
     req_pipeline_pruned.append(facet)
 
-    cursor = app.data.aggregate(resource, req_pipeline_pruned, options).next()
+    cursor = await (await app.data.aggregate(resource, req_pipeline_pruned, options)).next()
 
     for document in cursor["paginated_results"]:
         documents.append(document)
 
-    getattr(app, "after_aggregation")(resource, documents)
+    await getattr(app, "after_aggregation")(resource, documents)
 
     response[config.ITEMS] = documents
 
@@ -238,7 +240,7 @@ def _perform_aggregation(resource, pipeline, options):
     return response, None, None, 200, []
 
 
-def _perform_find(resource, lookup):
+async def _perform_find(resource, lookup):
     """
     .. versionadded:: 0.7
     """
@@ -254,13 +256,13 @@ def _perform_find(resource, lookup):
     # If-Modified-Since disabled on collections (#334)
     req.if_modified_since = None
 
-    cursor, count = app.data.find(
+    cursor, count = await app.data.find(
         resource, req, lookup, perform_count=not config.OPTIMIZE_PAGINATION_FOR_SPEED
     )
     # If soft delete is enabled, data.find will not include items marked
     # deleted unless req.show_deleted is True
-    for document in cursor:
-        build_response_document(document, resource, embedded_fields)
+    async for document in cursor:
+        await build_response_document(document, resource, embedded_fields)
         documents.append(document)
 
         # build last update for entire response
@@ -287,8 +289,8 @@ def _perform_find(resource, lookup):
     # functions modify the documents, the last_modified and etag won't be
     # updated to reflect the changes (they always reflect the documents
     # state on the database.)
-    getattr(app, "on_fetched_resource")(resource, response)
-    getattr(app, "on_fetched_resource_%s" % resource)(response)
+    await getattr(app, "on_fetched_resource")(resource, response)
+    await getattr(app, "on_fetched_resource_%s" % resource)(response)
 
     # the 'extra' cursor field, if present, will be added to the response.
     # Can be used by Eve extensions to add extra, custom data to any
@@ -302,7 +304,7 @@ def _perform_find(resource, lookup):
 @ratelimit()
 @requires_auth("item")
 @pre_event
-def getitem(resource, **lookup):
+async def getitem(resource, **lookup):
     """
     Default function for handling GET requests to document endpoints, it has
     decorators for rate limiting, authentication and for raising pre-request
@@ -311,10 +313,10 @@ def getitem(resource, **lookup):
 
     .. versionadded:: 0.6.2
     """
-    return getitem_internal(resource, **lookup)
+    return await getitem_internal(resource, **lookup)
 
 
-def getitem_internal(resource, **lookup):
+async def getitem_internal(resource, **lookup):
     """
     :param resource: the name of the resource to which the document belongs.
     :param **lookup: the lookup query.
@@ -384,7 +386,7 @@ def getitem_internal(resource, **lookup):
         # They are handled and included in 404 responses below.
         req.show_deleted = True
 
-    document = app.data.find_one(resource, req, **lookup)
+    document = await app.data.find_one(resource, req, **lookup)
     if not document:
         abort(404)
 
@@ -401,10 +403,10 @@ def getitem_internal(resource, **lookup):
     # synthesize old document version(s)
     if resource_def["versioning"] is True:
         latest_doc = document
-        document = get_old_document(resource, req, lookup, document, version)
+        document = await get_old_document(resource, req, lookup, document, version)
 
     # meld into response document
-    build_response_document(document, resource, embedded_fields, latest_doc)
+    await build_response_document(document, resource, embedded_fields, latest_doc)
     if config.IF_MATCH:
         etag = document[config.ETAG]
         if resource_def["versioning"] is True:
@@ -445,7 +447,7 @@ def getitem_internal(resource, **lookup):
             # default sort for 'all', required sort for 'diffs'
             req.sort = '[("%s", 1)]' % config.VERSION
         req.if_modified_since = None  # we always want the full history here
-        cursor, count = app.data.find(resource + config.VERSIONS, req, lookup)
+        cursor, count = await app.data.find(resource + config.VERSIONS, req, lookup)
 
         # build all versions
         documents = []
@@ -460,15 +462,15 @@ def getitem_internal(resource, **lookup):
             if version == "diffs" and req.page > 1:
                 # grab the last document on the previous page to diff from
                 last_version = cursor[0][app.config["VERSION"]] - 1
-                last_document = get_old_document(
+                last_document = await get_old_document(
                     resource, req, lookup, latest_doc, last_version
                 )
 
-            for i, document in enumerate(cursor):
+            async for i, document in asyncstdlib.enumerate(cursor):
                 document = synthesize_versioned_document(
                     latest_doc, document, resource_def
                 )
-                build_response_document(document, resource, embedded_fields, latest_doc)
+                await build_response_document(document, resource, embedded_fields, latest_doc)
                 if version == "diffs":
                     if i == 0:
                         documents.append(document)
@@ -526,15 +528,15 @@ def getitem_internal(resource, **lookup):
             versions = response[config.ITEMS]
 
         if version == "diffs":
-            getattr(app, "on_fetched_diffs")(resource, versions)
-            getattr(app, "on_fetched_diffs_%s" % resource)(versions)
+            await getattr(app, "on_fetched_diffs")(resource, versions)
+            await getattr(app, "on_fetched_diffs_%s" % resource)(versions)
         else:
             for version_item in versions:
-                getattr(app, "on_fetched_item")(resource, version_item)
-                getattr(app, "on_fetched_item_%s" % resource)(version_item)
+                await getattr(app, "on_fetched_item")(resource, version_item)
+                await getattr(app, "on_fetched_item_%s" % resource)(version_item)
     else:
-        getattr(app, "on_fetched_item")(resource, response)
-        getattr(app, "on_fetched_item_%s" % resource)(response)
+        await getattr(app, "on_fetched_item")(resource, response)
+        await getattr(app, "on_fetched_item_%s" % resource)(response)
 
     return response, last_modified, etag, 200
 

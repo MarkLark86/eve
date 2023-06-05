@@ -20,10 +20,11 @@ from functools import wraps
 import simplejson as json
 from bson.dbref import DBRef
 from bson.errors import InvalidId
-from cerberus import rules_set_registry, schema_registry
-from flask import abort
-from flask import current_app as app
-from flask import g, request
+from cerberus.schema import rules_set_registry, schema_registry
+from quart import abort
+from quart import current_app as app
+from quart import g, request
+from quart.utils import is_coroutine_function
 from werkzeug.datastructures import CombinedMultiDict, MultiDict
 
 from eve.utils import (
@@ -36,7 +37,7 @@ from eve.utils import (
 from eve.versioning import get_data_version_relation_document, resolve_document_version
 
 
-def get_document(
+async def get_document(
     resource,
     concurrency_check,
     original=None,
@@ -89,7 +90,7 @@ def get_document(
     if original:
         document = original
     else:
-        document = app.data.find_one(
+        document = await app.data.find_one(
             resource,
             req,
             check_auth_value,
@@ -169,7 +170,7 @@ def parse(value, resource):
     return document
 
 
-def payload():
+async def payload():
     """Performs sanity checks or decoding depending on the Content-Type,
     then returns the request payload as a dict. If request Content-Type is
     unsupported, aborts with a 400 (Bad Request).
@@ -198,22 +199,26 @@ def payload():
     content_type = request.headers.get("Content-Type", "").split(";")[0]
 
     if content_type in config.JSON_REQUEST_CONTENT_TYPES:
-        return request.get_json(force=True)
+        return await request.get_json(force=True)
     if content_type == "application/x-www-form-urlencoded":
+        form_data = await request.form
         return (
-            multidict_to_dict(request.form)
-            if len(request.form)
+            multidict_to_dict(form_data)
+            if len(form_data)
             else abort(400, description="No form-urlencoded data supplied")
         )
     if content_type == "multipart/form-data":
+        form_data = await request.form
+        request_files = await request.files
+
         # as multipart is also used for file uploads, we let an empty
         # request.form go through as long as there are also files in the
         # request.
-        if len(request.form) or len(request.files):
+        if len(form_data) or len(request_files):
             # merge form fields and request files, so we get a single payload
             # to be validated against the resource schema.
 
-            formItems = MultiDict(request.form)
+            formItems = MultiDict(form_data)
 
             if config.MULTIPART_FORM_FIELDS_AS_JSON:
                 for key, lst in formItems.lists():
@@ -225,7 +230,7 @@ def payload():
                             new_lst.append(json.loads('"{0}"'.format(value)))
                     formItems.setlist(key, new_lst)
 
-            payload = CombinedMultiDict([formItems, request.files])
+            payload = CombinedMultiDict([formItems, request_files])
             return multidict_to_dict(payload)
 
         abort(400, description="No multipart/form-data supplied")
@@ -301,7 +306,7 @@ def ratelimit():
 
     def decorator(f):
         @wraps(f)
-        def rate_limited(*args, **kwargs):
+        async def rate_limited(*args, **kwargs):
             method_limit = app.config.get("RATE_LIMIT_" + request.method)
             if method_limit and app.redis:
                 limit = method_limit[0]
@@ -321,7 +326,7 @@ def ratelimit():
                 g._rate_limit = rlimit
             else:
                 g._rate_limit = None
-            return f(*args, **kwargs)
+            return await f(*args, **kwargs)
 
         return rate_limited
 
@@ -600,7 +605,7 @@ def normalize_dotted_fields(document):
                 normalize_dotted_fields(document[field])
 
 
-def build_response_document(document, resource, embedded_fields, latest_doc=None):
+async def build_response_document(document, resource, embedded_fields, latest_doc=None):
     """Prepares a document for response including generation of ETag and
     metadata fields.
 
@@ -656,7 +661,7 @@ def build_response_document(document, resource, embedded_fields, latest_doc=None
     resolve_document_version(document, resource, "GET", latest_doc)
 
     # resolve media
-    resolve_media_files(document, resource)
+    await resolve_media_files(document, resource)
 
     # resolve soft delete
     if resource_def["soft_delete"] is True:
@@ -668,7 +673,7 @@ def build_response_document(document, resource, embedded_fields, latest_doc=None
             return
 
     # resolve embedded documents
-    resolve_embedded_documents(document, resource, embedded_fields)
+    await resolve_embedded_documents(document, resource, embedded_fields)
 
 
 def resolve_resource_projection(document, resource):
@@ -852,7 +857,7 @@ def resolve_embedded_fields(resource, req):
     return enabled_embedded_fields
 
 
-def embedded_document(references, data_relation, field_name):
+async def embedded_document(references, data_relation, field_name):
     """Returns a document to be embedded by reference using data_relation
         taking into account document versions
 
@@ -876,10 +881,10 @@ def embedded_document(references, data_relation, field_name):
         # make it bulk)
         for reference in references:
             # grab the specific version
-            embedded_doc = get_data_version_relation_document(data_relation, reference)
+            embedded_doc = await get_data_version_relation_document(data_relation, reference)
 
             # grab the latest version
-            latest_embedded_doc = get_data_version_relation_document(
+            latest_embedded_doc = await get_data_version_relation_document(
                 data_relation, reference, latest=True
             )
 
@@ -894,7 +899,7 @@ def embedded_document(references, data_relation, field_name):
                     ),
                 )
 
-            build_response_document(
+            await build_response_document(
                 embedded_doc, data_relation["resource"], [], latest_embedded_doc
             )
             embedded_docs.append(embedded_doc)
@@ -905,10 +910,10 @@ def embedded_document(references, data_relation, field_name):
             subresources_query,
         ) = generate_query_and_sorting_criteria(data_relation, references)
         for subresource in subresources_query:
-            result, _ = app.data.find(
+            result, _ = await app.data.find(
                 subresource, None, subresources_query[subresource]
             )
-            list_embedded_doc = list(result)
+            list_embedded_doc = await result.to_list(None)
 
             if not list_embedded_doc:
                 embedded_docs.extend(
@@ -916,7 +921,7 @@ def embedded_document(references, data_relation, field_name):
                 )
             else:
                 for embedded_doc in list_embedded_doc:
-                    resolve_media_files(embedded_doc, subresource)
+                    await resolve_media_files(embedded_doc, subresource)
                 embedded_docs.extend(list_embedded_doc)
 
         # After having retrieved my data, I have to be sure that the sorting of
@@ -1070,7 +1075,7 @@ def subdocuments(fields_chain, resource, document, prefix=""):
         yield document
 
 
-def resolve_embedded_documents(document, resource, embedded_fields):
+async def resolve_embedded_documents(document, resource, embedded_fields):
     """Loops through the documents, adding embedded representations
     of any fields that are (1) defined eligible for embedding in the
     DOMAIN and (2) requested to be embedded in the current `req`.
@@ -1105,16 +1110,15 @@ def resolve_embedded_documents(document, resource, embedded_fields):
     # NOTE(Gonéri): We resolve the embedded documents at the end.
     for field in sorted(embedded_fields, key=lambda a: a.count(".")):
         data_relation = field_definition(resource, field)["data_relation"]
-        getter = lambda ref: embedded_document(ref, data_relation, field)  # noqa
         fields_chain = field.split(".")
         last_field = fields_chain[-1]
         for subdocument in subdocuments(fields_chain[:-1], resource, document):
             if not subdocument or last_field not in subdocument:
                 continue
-            subdocument[last_field] = getter(subdocument[last_field])
+            subdocument[last_field] = await embedded_document(subdocument[last_field], data_relation, field)
 
 
-def resolve_media_files(document, resource):
+async def resolve_media_files(document, resource):
     """Embed media files into the response document.
 
     :param document: the document eventually containing the media files.
@@ -1126,21 +1130,21 @@ def resolve_media_files(document, resource):
         if isinstance(document[field], list):
             resolved_list = []
             for file_id in document[field]:
-                resolved_list.append(resolve_one_media(file_id, resource))
+                resolved_list.append(await resolve_one_media(file_id, resource))
             document[field] = resolved_list
         else:
-            document[field] = resolve_one_media(document[field], resource)
+            document[field] = await resolve_one_media(document[field], resource)
 
 
-def resolve_one_media(file_id, resource):
+async def resolve_one_media(file_id, resource):
     """Get response for one media file"""
-    _file = app.media.get(file_id, resource)
+    _file = await app.media.get(file_id, resource)
 
     if _file:
         # otherwise we have a valid file and should send extended response
         # start with the basic file object
         if config.RETURN_MEDIA_AS_BASE64_STRING:
-            ret_file = base64.b64encode(_file.read())
+            ret_file = base64.b64encode(await _file.read())
         elif config.RETURN_MEDIA_AS_URL:
             prefix = (
                 config.MEDIA_BASE_URL
@@ -1203,7 +1207,7 @@ def marshal_write_response(document, resource):
     return document
 
 
-def store_media_files(document, resource, original=None):
+async def store_media_files(document, resource, original=None):
     """Store any media file in the underlying media store and update the
     document with unique ids of stored files.
 
@@ -1226,9 +1230,9 @@ def store_media_files(document, resource, original=None):
             # system, we first need to delete the files being replaced.
             if isinstance(original[field], list):
                 for file_id in original[field]:
-                    app.media.delete(file_id, resource)
+                    await app.media.delete(file_id, resource)
             else:
-                app.media.delete(original[field], resource)
+                await app.media.delete(original[field], resource)
 
         if document[field]:
             # store files and update document with file's unique id/filename
@@ -1237,7 +1241,7 @@ def store_media_files(document, resource, original=None):
                 id_lst = []
                 for stor_obj in document[field]:
                     id_lst.append(
-                        app.media.put(
+                        await app.media.put(
                             stor_obj,
                             filename=stor_obj.filename,
                             content_type=stor_obj.mimetype,
@@ -1246,7 +1250,7 @@ def store_media_files(document, resource, original=None):
                     )
                 document[field] = id_lst
             else:
-                document[field] = app.media.put(
+                document[field] = await app.media.put(
                     document[field],
                     filename=document[field].filename,
                     content_type=document[field].mimetype,
@@ -1337,7 +1341,7 @@ def pre_event(f):
     """
 
     @wraps(f)
-    def decorated(*args, **kwargs):
+    async def decorated(*args, **kwargs):
         method = request.method
         if method == "HEAD":
             method = "GET"
@@ -1360,12 +1364,12 @@ def pre_event(f):
             rh_params = (request,)
 
         # general hook
-        getattr(app, event_name)(*gh_params)
+        await getattr(app, event_name)(*gh_params)
         if resource:
             # resource hook
-            getattr(app, event_name + "_" + resource)(*rh_params)
+            await getattr(app, event_name + "_" + resource)(*rh_params)
 
-        r = f(resource, **combined_args)
+        r = await f(resource, **combined_args)
         return r
 
     return decorated
@@ -1438,7 +1442,7 @@ def resource_link(resource=None):
     return path
 
 
-def oplog_push(resource, document, op, id=None):
+async def oplog_push(resource, document, op, id=None):
     """Pushes an edit operation to the oplog if included in OPLOG_METHODS. To
     save on storage space (at least on MongoDB) field names are shortened:
 
@@ -1525,9 +1529,9 @@ def oplog_push(resource, document, op, id=None):
 
     if entries:
         # notify callbacks
-        getattr(app, "on_oplog_push")(resource, entries)
+        await getattr(app, "on_oplog_push")(resource, entries)
         # oplog push
-        app.data.insert(config.OPLOG_NAME, entries)
+        await app.data.insert(config.OPLOG_NAME, entries)
 
 
 def utcnow():

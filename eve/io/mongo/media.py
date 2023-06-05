@@ -8,8 +8,8 @@
     :license: BSD, see LICENSE for more details.
 """
 from bson import ObjectId
-from flask import Flask
-from gridfs import GridFS
+from quart import Quart
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from eve.io.media import MediaStorage
 from eve.io.mongo import Mongo
@@ -43,7 +43,7 @@ class GridFSMediaStorage(MediaStorage):
         if self.app is None:
             raise TypeError("Application object cannot be None")
 
-        if not isinstance(self.app, Flask):
+        if not isinstance(self.app, Quart):
             raise TypeError("Application object must be a Eve application")
 
     def fs(self, resource=None):
@@ -59,10 +59,10 @@ class GridFSMediaStorage(MediaStorage):
 
         px = driver.current_mongo_prefix(resource)
         if px not in self._fs:
-            self._fs[px] = GridFS(driver.pymongo(prefix=px).db)
+            self._fs[px] = AsyncIOMotorGridFSBucket(driver.pymongo(prefix=px).db)
         return self._fs[px]
 
-    def get(self, _id, resource=None):
+    async def get(self, _id, resource=None):
         """Returns the file given by unique id. Returns None if no file was
         found.
 
@@ -79,27 +79,31 @@ class GridFSMediaStorage(MediaStorage):
 
         _file = None
         try:
-            _file = self.fs(resource).get(_id)
+            _file = await self.fs(resource).open_download_stream(_id)
         except Exception:
             pass
         return _file
 
-    def put(self, content, filename=None, content_type=None, resource=None):
+    async def put(self, content, filename=None, content_type=None, resource=None):
         """Saves a new file in GridFS. Returns the unique id of the stored
         file. Also stores content type of the file.
         """
-        return self.fs(resource).put(
-            content, filename=filename, content_type=content_type
+        if hasattr(content, "stream") and hasattr(content.stream, "seek"):
+            content.stream.seek(0)
+        return await self.fs(resource).upload_from_stream(
+            filename=filename,
+            source=content,
+            metadata={"contentType": content_type}
         )
 
-    def delete(self, _id, resource=None):
+    async def delete(self, _id, resource=None):
         """Deletes the file referenced by unique id."""
-        self.fs(resource).delete(_id)
+        await self.fs(resource).delete(_id)
 
-    def exists(self, id_or_document, resource=None):
+    async def exists(self, id_or_document, resource=None):
         """Returns True if a file referenced by the unique id or the query
         document already exists, False otherwise.
 
         Valid query: {'filename': 'file.txt'}
         """
-        return self.fs(resource).exists(id_or_document)
+        return len(await self.fs(resource).find({"_id": id_or_document}).limit(1).to_list(None))

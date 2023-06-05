@@ -13,7 +13,7 @@ import datetime
 from copy import copy
 
 import simplejson as json
-from flask import abort, request
+from quart import abort, request
 
 from eve.auth import auth_field_and_value
 from eve.utils import auto_fields, config, date_to_str, debug_error_message
@@ -118,7 +118,7 @@ class DataLayer():
         """
         raise NotImplementedError
 
-    def find(self, resource, req, sub_resource_lookup, perform_count=True):
+    async def find(self, resource, req, sub_resource_lookup, perform_count=True):
         """Retrieves a set of documents (rows), matching the current request.
         Consumed when a request hits a collection/document endpoint
         (`/people/`).
@@ -143,7 +143,7 @@ class DataLayer():
         """
         raise NotImplementedError
 
-    def aggregate(self, resource, pipeline, options):
+    async def aggregate(self, resource, pipeline, options):
         """Perform an aggregation on the resource datasource and returns
         the result. Only implent this if the underlying db engine supports
         aggregation operations.
@@ -158,7 +158,7 @@ class DataLayer():
         """
         raise NotImplementedError
 
-    def find_one(
+    async def find_one(
         self,
         resource,
         req,
@@ -199,7 +199,7 @@ class DataLayer():
         """
         raise NotImplementedError
 
-    def find_one_raw(self, resource, **lookup):
+    async def find_one_raw(self, resource, **lookup):
         """Retrieves a single, raw document. No projections or datasource
         filters are being applied here. Just looking up the document using the
         same lookup.
@@ -211,7 +211,7 @@ class DataLayer():
         """
         raise NotImplementedError
 
-    def find_list_of_ids(self, resource, ids, client_projection=None):
+    async def find_list_of_ids(self, resource, ids, client_projection=None):
         """Retrieves a list of documents based on a list of primary keys
         The primary key is the field defined in `ID_FIELD`.
         This is a separate function to allow us to use per-database
@@ -228,7 +228,7 @@ class DataLayer():
         """
         raise NotImplementedError
 
-    def insert(self, resource, doc_or_docs):
+    async def insert(self, resource, doc_or_docs):
         """Inserts a document into a resource collection/table.
 
         :param resource: resource being accessed. You should then use
@@ -243,7 +243,7 @@ class DataLayer():
         """
         raise NotImplementedError
 
-    def update(self, resource, id_, updates, original):
+    async def update(self, resource, id_, updates, original):
         """Updates a collection/table document/row.
         :param resource: resource being accessed. You should then use
                          the ``datasource`` helper function to retrieve
@@ -258,7 +258,7 @@ class DataLayer():
         """
         raise NotImplementedError
 
-    def replace(self, resource, id_, document, original):
+    async def replace(self, resource, id_, document, original):
         """Replaces a collection/table document/row.
         :param resource: resource being accessed. You should then use
                          the ``datasource`` helper function to retrieve
@@ -273,7 +273,7 @@ class DataLayer():
         """
         raise NotImplementedError
 
-    def remove(self, resource, lookup):
+    async def remove(self, resource, lookup):
         """Removes a document/row or an entire set of documents/rows from a
         database collection/table.
 
@@ -319,7 +319,7 @@ class DataLayer():
         """
         raise NotImplementedError
 
-    def is_empty(self, resource):
+    async def is_empty(self, resource):
         """Returns True if the collection is empty; False otherwise. While
         a user could rely on self.find() method to achieve the same result,
         this method can probably take advantage of specific datastore features

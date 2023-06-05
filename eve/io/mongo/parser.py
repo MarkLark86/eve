@@ -153,3 +153,7 @@ class MongoVisitor(ast.NodeVisitor):
     def visit_Str(self, node):
         """Strings handler."""
         self.current_value = node.s
+
+    def visit_Constant(self, node):
+        """Constants handler."""
+        self.current_value = node.s

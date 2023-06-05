@@ -12,8 +12,9 @@
 """
 
 from cerberus.validator import DocumentError
-from flask import abort
-from flask import current_app as app
+from quart import abort
+from quart import current_app as app
+from quart.utils import is_coroutine_function
 
 from eve.auth import requires_auth
 from eve.methods.common import (build_response_document,
@@ -31,7 +32,7 @@ from eve.versioning import (insert_versioning_documents,
 @ratelimit()
 @requires_auth("resource")
 @pre_event
-def post(resource, payl=None):
+async def post(resource, payl=None):
     """
     Default function for handling POST requests, it has decorators for
     rate limiting, authentication and for raising pre-request events. After the
@@ -40,10 +41,10 @@ def post(resource, payl=None):
     .. versionchanged:: 0.5
        Split original post() into post/post_internal combo.
     """
-    return post_internal(resource, payl, skip_validation=False)
+    return await post_internal(resource, payl, skip_validation=False)
 
 
-def post_internal(resource, payl=None, skip_validation=False):
+async def post_internal(resource, payl=None, skip_validation=False):
     """
     Intended for internal post calls, this method is not rate limited,
     authentication is not checked and pre-request events are not raised.
@@ -162,6 +163,9 @@ def post_internal(resource, payl=None, skip_validation=False):
         )
     )
 
+    if validator is not None:
+        await validator.init()
+
     documents = []
     results = []
     failures = 0
@@ -175,7 +179,7 @@ def post_internal(resource, payl=None, skip_validation=False):
 
     # validation, and additional fields
     if payl is None:
-        payl = payload()
+        payl = await payload()
 
     if isinstance(payl, dict):
         payl = [payl]
@@ -196,7 +200,10 @@ def post_internal(resource, payl=None, skip_validation=False):
             if skip_validation:
                 validation = True
             else:
-                validation = validator.validate(document)
+                if is_coroutine_function(validator.validate):
+                    validation = await validator.validate(document)
+                else:
+                    validation = validator.validate(document)
             if validation:  # validation is successful
                 # validator might be not available if skip_validation. #726.
                 if validator:
@@ -210,7 +217,7 @@ def post_internal(resource, payl=None, skip_validation=False):
                     document[config.DELETED] = False
 
                 resolve_user_restricted_access(document, resource)
-                store_media_files(document, resource)
+                await store_media_files(document, resource)
                 resolve_document_version(document, resource, "POST")
             else:
                 # validation errors added to list of document issues
@@ -244,17 +251,17 @@ def post_internal(resource, payl=None, skip_validation=False):
         return_code = config.VALIDATION_ERROR_STATUS
     else:
         # notify callbacks
-        getattr(app, "on_insert")(resource, documents)
-        getattr(app, "on_insert_%s" % resource)(documents)
+        await getattr(app, "on_insert")(resource, documents)
+        await getattr(app, "on_insert_%s" % resource)(documents)
 
         # compute etags here as documents might have been updated by callbacks.
         resolve_document_etag(documents, resource)
 
         # bulk insert
-        ids = app.data.insert(resource, documents)
+        ids = await app.data.insert(resource, documents)
 
         # update oplog if needed
-        oplog_push(resource, documents, "POST")
+        await oplog_push(resource, documents, "POST")
 
         # assign document ids
         for document in documents:
@@ -265,7 +272,7 @@ def post_internal(resource, payl=None, skip_validation=False):
 
             # build the full response document
             result = document
-            build_response_document(result, resource, embedded_fields, document)
+            await build_response_document(result, resource, embedded_fields, document)
 
             # add extra write meta data
             result[config.STATUS] = config.STATUS_OK
@@ -275,11 +282,11 @@ def post_internal(resource, payl=None, skip_validation=False):
             results.append(result)
 
         # insert versioning docs
-        insert_versioning_documents(resource, documents)
+        await insert_versioning_documents(resource, documents)
 
         # notify callbacks
-        getattr(app, "on_inserted")(resource, documents)
-        getattr(app, "on_inserted_%s" % resource)(documents)
+        await getattr(app, "on_inserted")(resource, documents)
+        await getattr(app, "on_inserted_%s" % resource)(documents)
         # request was received and accepted; at least one document passed
         # validation and was accepted for insertion.
 

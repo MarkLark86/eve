@@ -17,9 +17,9 @@ from collections import OrderedDict  # noqa
 from functools import wraps
 
 import simplejson as json
-from flask import Response, abort
-from flask import current_app as app
-from flask import make_response, request
+from quart import Response, abort
+from quart import current_app as app
+from quart import make_response, request
 from markupsafe import escape
 from werkzeug import utils
 
@@ -48,24 +48,24 @@ def raise_event(f):
     """
 
     @wraps(f)
-    def decorated(*args, **kwargs):
-        r = f(*args, **kwargs)
+    async def decorated(*args, **kwargs):
+        r = await f(*args, **kwargs)
         method = request.method
         if method in ("GET", "POST", "PATCH", "DELETE", "PUT"):
             event_name = "on_post_" + method
             resource = args[0] if args else None
             # general hook
-            getattr(app, event_name)(resource, request, r)
+            await getattr(app, event_name)(resource, request, r)
             if resource:
                 # resource hook
-                getattr(app, event_name + "_" + resource)(request, r)
+                await getattr(app, event_name + "_" + resource)(request, r)
         return r
 
     return decorated
 
 
 @raise_event
-def send_response(resource, response):
+async def send_response(resource, response):
     """Prepares the response for the client.
 
     :param resource: the resource involved.
@@ -88,10 +88,10 @@ def send_response(resource, response):
     """
     if isinstance(response, Response):
         return response
-    return _prepare_response(resource, *response if response else [None])
+    return await _prepare_response(resource, *response if response else [None])
 
 
-def _prepare_response(
+async def _prepare_response(
     resource, dct, last_modified=None, etag=None, status=200, headers=None
 ):
     """Prepares the response object according to the client request and
@@ -136,7 +136,7 @@ def _prepare_response(
     .. versionadded:: 0.0.4
     """
     if request.method == "OPTIONS":
-        resp = app.make_default_options_response()
+        resp = await app.make_default_options_response()
     elif isinstance(dct, Response):
         resp = dct
     else:
@@ -155,7 +155,7 @@ def _prepare_response(
                 rendered = "%s(%s)" % (callback, rendered)
 
         # build the main wsgi response object
-        resp = make_response(rendered, status)
+        resp = await make_response(rendered, status)
         resp.mimetype = mime
         resp.autocorrect_location_header = True
 
@@ -227,7 +227,7 @@ def _prepare_response(
         # is "true"
         allow_credentials = config.X_ALLOW_CREDENTIALS is True
 
-        methods = app.make_default_options_response().headers.get("allow", "")
+        methods = (await app.make_default_options_response()).headers.get("allow", "")
 
         if "*" in domains:
             resp.headers.add("Access-Control-Allow-Origin", origin)

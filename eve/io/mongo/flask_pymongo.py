@@ -10,9 +10,9 @@
     :copyright: (c) 2017 by Nicola Iarocci.
     :license: BSD, see LICENSE for more details.
 """
-from bson import UuidRepresentation
-from flask import current_app
-from pymongo import MongoClient, uri_parser
+from quart import current_app
+from pymongo import uri_parser
+from motor.motor_asyncio import AsyncIOMotorClient
 
 
 class PyMongo():
@@ -109,7 +109,7 @@ class PyMongo():
                 }
                 auth_kwargs = config_to_kwargs(auth_mapping)
 
-        cx = MongoClient(**{**client_kwargs, **auth_kwargs})
+        cx = AsyncIOMotorClient(**{**client_kwargs, **auth_kwargs})
         db = cx[dbname]
 
         app.extensions["pymongo"][config_prefix] = (cx, db)
