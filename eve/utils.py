@@ -19,8 +19,7 @@ from importlib import import_module
 import werkzeug.exceptions
 from bson import UuidRepresentation
 from bson.json_util import dumps
-from flask import current_app as app
-from flask import request
+from quart import current_app as app, request
 from werkzeug.datastructures import MultiDict
 
 import eve

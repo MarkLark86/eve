@@ -11,8 +11,7 @@
 """
 
 from cerberus.validator import DocumentError
-from flask import abort
-from flask import current_app as app
+from quart import abort, current_app as app
 from werkzeug import exceptions
 
 from eve.auth import auth_field_and_value, requires_auth
@@ -33,7 +32,7 @@ from eve.versioning import (insert_versioning_documents, late_versioning_catch,
 @ratelimit()
 @requires_auth("item")
 @pre_event
-def put(resource, payload=None, **lookup):
+async def put(resource, payload=None, **lookup):
     """
     Default function for handling PUT requests, it has decorators for
     rate limiting, authentication and for raising pre-request events.
@@ -42,12 +41,12 @@ def put(resource, payload=None, **lookup):
     .. versionchanged:: 0.5
        Split into put() and put_internal().
     """
-    return put_internal(
+    return await put_internal(
         resource, payload, concurrency_check=True, skip_validation=False, **lookup
     )
 
 
-def put_internal(
+async def put_internal(
     resource, payload=None, concurrency_check=False, skip_validation=False, **lookup
 ):
     """Intended for internal put calls, this method is not rate limited,
@@ -119,7 +118,7 @@ def put_internal(
     )
 
     if payload is None:
-        payload = payload_()
+        payload = await payload_()
 
     # Retrieve the original document without checking user-restricted access,
     # but returning the document owner in the projection. This allows us to
@@ -140,7 +139,7 @@ def put_internal(
             if schema[resource_def["id_field"]].get("type", "") == "objectid":
                 id = str(id)
             payload[resource_def["id_field"]] = id
-            return post_internal(resource, payl=payload)
+            return await post_internal(resource, payl=payload)
         abort(404)
 
     # If the document exists, but is owned by someone else, return

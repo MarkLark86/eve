@@ -20,7 +20,7 @@ import pymongo
 import simplejson as json
 from bson import ObjectId, decimal128
 from bson.dbref import DBRef
-from flask import abort, g, request
+from quart import abort, g, request
 from pymongo import WriteConcern
 from werkzeug.exceptions import HTTPException
 
@@ -996,7 +996,7 @@ class Mongo(DataLayer):
 
         Even a standard Flask view can set the mongo_prefix:
 
-            from flask import g
+            from quart import g
 
             g.mongo_prefix = 'MONGO2'
 
@@ -1155,8 +1155,7 @@ def _create_index(app, resource, name, list_of_keys, index_options):
     except Exception:
         px = app.config["DOMAIN"][resource].get("mongo_prefix", "MONGO")
 
-    with app.app_context():
-        db = app.data.pymongo(resource, px).db
+    db = app.data.pymongo(resource, px).get_db_from_app(app)
 
     kw = copy(index_options)
     kw["name"] = name

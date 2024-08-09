@@ -10,10 +10,9 @@
     :license: BSD, see LICENSE for more details.
 """
 from functools import wraps
+from inspect import iscoroutinefunction
 
-from flask import abort
-from flask import current_app as app
-from flask import g, request
+from quart import abort, current_app as app, g, request
 
 
 def requires_auth(endpoint_class):
@@ -36,7 +35,7 @@ def requires_auth(endpoint_class):
 
     def fdec(f):
         @wraps(f)
-        def decorated(*args, **kwargs):
+        async def decorated(*args, **kwargs):
             if endpoint_class == "resource" or endpoint_class == "item":
                 if args:
                     resource_name = args[0]
@@ -78,9 +77,13 @@ def requires_auth(endpoint_class):
                     roles += app.config["ALLOWED_WRITE_ROLES"]
                 auth = app.auth
             if auth and request.method not in public:
-                if not auth.authorized(roles, resource_name, request.method):
-                    return auth.authenticate()
-            return f(*args, **kwargs)
+                if iscoroutinefunction(auth.authorized):
+                    if not await auth.authorized(roles, resource_name, request.method):
+                        return auth.authenticate()
+                else:
+                    if not auth.authorized(roles, resource_name, request.method):
+                        return auth.authenticate()
+            return await f(*args, **kwargs)
 
         return decorated
 
@@ -206,7 +209,7 @@ class HMACAuth(BasicAuth):
         """
         raise NotImplementedError
 
-    def authorized(self, allowed_roles, resource, method):
+    async def authorized(self, allowed_roles, resource, method):
         """Validates the the current request is allowed to pass through.
 
         :param allowed_roles: allowed roles for the current request, can be a
@@ -223,7 +226,7 @@ class HMACAuth(BasicAuth):
             userid,
             hmac_hash,
             request.headers,
-            request.get_data(),
+            await request.get_data(),
             allowed_roles,
             resource,
             method,

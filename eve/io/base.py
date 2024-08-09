@@ -13,8 +13,8 @@ import datetime
 from copy import copy
 
 import simplejson as json
-from flask import abort, request
 
+from quart import abort, request
 from eve.auth import auth_field_and_value
 from eve.utils import auto_fields, config, date_to_str, debug_error_message
 

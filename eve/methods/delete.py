@@ -12,8 +12,7 @@
 
 import copy
 
-from flask import abort
-from flask import current_app as app
+from quart import abort, current_app as app
 
 from eve.auth import requires_auth
 from eve.methods.common import (get_document, oplog_push, pre_event, ratelimit,
@@ -30,7 +29,7 @@ def all_done():
 @ratelimit()
 @requires_auth("item")
 @pre_event
-def deleteitem(resource, **lookup):
+async def deleteitem(resource, **lookup):
     """
     Default function for handling DELETE requests, it has decorators for
     rate limiting, authentication and for raising pre-request events.
@@ -40,10 +39,10 @@ def deleteitem(resource, **lookup):
     .. versionchanged:: 0.5
        Split into deleteitem() and deleteitem_internal().
     """
-    return deleteitem_internal(resource, concurrency_check=True, **lookup)
+    return await deleteitem_internal(resource, concurrency_check=True, **lookup)
 
 
-def deleteitem_internal(
+async def deleteitem_internal(
     resource, concurrency_check=False, suppress_callbacks=False, original=None, **lookup
 ):
     """Intended for internal delete calls, this method is not rate limited,
@@ -184,7 +183,7 @@ def deleteitem_internal(
 
 @requires_auth("resource")
 @pre_event
-def delete(resource, **lookup):
+async def delete(resource, **lookup):
     """Deletes all item of a resource (collection in MongoDB terms). Won't
     drop indexes. Use with caution!
 

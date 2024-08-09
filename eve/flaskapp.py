@@ -16,9 +16,8 @@ import sys
 import warnings
 
 from events import Events
-from flask import Flask
+from quart import Quart
 from werkzeug.routing import BaseConverter
-from werkzeug.serving import WSGIRequestHandler
 
 import eve
 from eve import default_settings
@@ -32,19 +31,6 @@ from eve.logging import RequestFilter
 from eve.utils import api_prefix, extract_key_values
 
 
-class EveWSGIRequestHandler(WSGIRequestHandler):
-    """Extend werkzeug request handler to include current Eve version in all
-    responses, which is super-handy for debugging.
-    """
-
-    @property
-    def server_version(self):
-        return (
-            "Eve/%s " % eve.__version__
-            + super().server_version
-        )
-
-
 class RegexConverter(BaseConverter):
     """Extend werkzeug routing by supporting regex for urls/API endpoints"""
 
@@ -53,7 +39,7 @@ class RegexConverter(BaseConverter):
         self.regex = items[0]
 
 
-class Eve(Flask, Events):
+class Eve(Quart, Events):
     """The main Eve object. On initialization it will load Eve settings, then
     configure and enable the API endpoints. The API is launched by executing
     the code below:::
@@ -199,25 +185,6 @@ class Eve(Flask, Events):
         # self.config['DOMAIN'].update(domain_copy)
 
         self.register_error_handlers()
-
-    def run(self, host=None, port=None, debug=None, **options):
-        """
-        Pass our own subclass of :class:`werkzeug.serving.WSGIRequestHandler
-        to Flask.
-
-        :param host: the hostname to listen on. Set this to ``'0.0.0.0'`` to
-                     have the server available externally as well. Defaults to
-                     ``'127.0.0.1'``.
-        :param port: the port of the webserver. Defaults to ``5000``.
-        :param debug: if given, enable or disable debug mode.
-                      See :attr:`debug`.
-        :param options: the options to be forwarded to the underlying
-                        Werkzeug server.  See
-                        :func:`werkzeug.serving.run_simple` for more
-                        information."""
-
-        options.setdefault("request_handler", EveWSGIRequestHandler)
-        super().run(host, port, debug, **options)
 
     def load_config(self):
         """API settings are loaded from standard python modules. First from
@@ -1090,15 +1057,3 @@ class Eve(Flask, Events):
                 view_func=schema_item_endpoint,
                 methods=["GET", "OPTIONS"],
             )
-
-    def __call__(self, environ, start_response):
-        """If HTTP_X_METHOD_OVERRIDE is included with the request and method
-        override is allowed, make sure the override method is returned to Eve
-        as the request method, so normal routing and method validation can be
-        performed.
-        """
-        if self.config["ALLOW_OVERRIDE_HTTP_METHOD"]:
-            environ["REQUEST_METHOD"] = environ.get(
-                "HTTP_X_HTTP_METHOD_OVERRIDE", environ["REQUEST_METHOD"]
-            ).upper()
-        return super().__call__(environ, start_response)

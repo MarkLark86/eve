@@ -21,9 +21,7 @@ import simplejson as json
 from bson.dbref import DBRef
 from bson.errors import InvalidId
 from cerberus import rules_set_registry, schema_registry
-from flask import abort
-from flask import current_app as app
-from flask import g, request
+from quart import abort, current_app as app, g, request
 from werkzeug.datastructures import CombinedMultiDict, MultiDict
 
 from eve.utils import (
@@ -169,7 +167,7 @@ def parse(value, resource):
     return document
 
 
-def payload():
+async def payload():
     """Performs sanity checks or decoding depending on the Content-Type,
     then returns the request payload as a dict. If request Content-Type is
     unsupported, aborts with a 400 (Bad Request).
@@ -198,22 +196,22 @@ def payload():
     content_type = request.headers.get("Content-Type", "").split(";")[0]
 
     if content_type in config.JSON_REQUEST_CONTENT_TYPES:
-        return request.get_json(force=True)
+        return await request.get_json(force=True)
     if content_type == "application/x-www-form-urlencoded":
         return (
-            multidict_to_dict(request.form)
-            if len(request.form)
+            multidict_to_dict(await request.form)
+            if len(await request.form)
             else abort(400, description="No form-urlencoded data supplied")
         )
     if content_type == "multipart/form-data":
         # as multipart is also used for file uploads, we let an empty
         # request.form go through as long as there are also files in the
         # request.
-        if len(request.form) or len(request.files):
+        if len(await request.form) or len(await request.files):
             # merge form fields and request files, so we get a single payload
             # to be validated against the resource schema.
 
-            formItems = MultiDict(request.form)
+            formItems = MultiDict(await request.form)
 
             if config.MULTIPART_FORM_FIELDS_AS_JSON:
                 for key, lst in formItems.lists():
@@ -225,7 +223,7 @@ def payload():
                             new_lst.append(json.loads('"{0}"'.format(value)))
                     formItems.setlist(key, new_lst)
 
-            payload = CombinedMultiDict([formItems, request.files])
+            payload = CombinedMultiDict([formItems, await request.files])
             return multidict_to_dict(payload)
 
         abort(400, description="No multipart/form-data supplied")

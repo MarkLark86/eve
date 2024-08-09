@@ -12,8 +12,7 @@
 """
 
 from cerberus.validator import DocumentError
-from flask import abort
-from flask import current_app as app
+from quart import abort, current_app as app
 
 from eve.auth import requires_auth
 from eve.methods.common import (build_response_document,
@@ -31,7 +30,7 @@ from eve.versioning import (insert_versioning_documents,
 @ratelimit()
 @requires_auth("resource")
 @pre_event
-def post(resource, payl=None):
+async def post(resource, payl=None):
     """
     Default function for handling POST requests, it has decorators for
     rate limiting, authentication and for raising pre-request events. After the
@@ -40,10 +39,10 @@ def post(resource, payl=None):
     .. versionchanged:: 0.5
        Split original post() into post/post_internal combo.
     """
-    return post_internal(resource, payl, skip_validation=False)
+    return await post_internal(resource, payl, skip_validation=False)
 
 
-def post_internal(resource, payl=None, skip_validation=False):
+async def post_internal(resource, payl=None, skip_validation=False):
     """
     Intended for internal post calls, this method is not rate limited,
     authentication is not checked and pre-request events are not raised.
@@ -175,7 +174,7 @@ def post_internal(resource, payl=None, skip_validation=False):
 
     # validation, and additional fields
     if payl is None:
-        payl = payload()
+        payl = await payload()
 
     if isinstance(payl, dict):
         payl = [payl]

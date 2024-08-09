@@ -1,5 +1,4 @@
-from flask import abort
-from flask import current_app as app
+from quart import abort, current_app as app
 from werkzeug.exceptions import BadRequestKeyError
 
 from eve.utils import ParsedRequest, config, debug_error_message

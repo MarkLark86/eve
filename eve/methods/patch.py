@@ -13,8 +13,7 @@
 from copy import deepcopy
 
 from cerberus.validator import DocumentError
-from flask import abort
-from flask import current_app as app
+from quart import abort, current_app as app
 from werkzeug import exceptions
 
 from eve.auth import requires_auth
@@ -32,7 +31,7 @@ from eve.versioning import (insert_versioning_documents, late_versioning_catch,
 @ratelimit()
 @requires_auth("item")
 @pre_event
-def patch(resource, payload=None, **lookup):
+async def patch(resource, payload=None, **lookup):
     """
     Default function for handling PATCH requests, it has decorators for
     rate limiting, authentication and for raising pre-request events.
@@ -41,12 +40,12 @@ def patch(resource, payload=None, **lookup):
     .. versionchanged:: 0.5
        Split into patch() and patch_internal().
     """
-    return patch_internal(
+    return await patch_internal(
         resource, payload, concurrency_check=True, skip_validation=False, **lookup
     )
 
 
-def patch_internal(
+async def patch_internal(
     resource,
     payload=None,
     concurrency_check=False,
@@ -141,7 +140,7 @@ def patch_internal(
        JSON links. Superflous ``response`` container removed.
     """
     if payload is None:
-        payload = payload_()
+        payload = await payload_()
 
     original = get_document(
         resource, concurrency_check, mongo_options=mongo_options, **lookup

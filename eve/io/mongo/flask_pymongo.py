@@ -11,7 +11,7 @@
     :license: BSD, see LICENSE for more details.
 """
 from bson import UuidRepresentation
-from flask import current_app
+from quart import current_app
 from pymongo import MongoClient, uri_parser
 
 
@@ -133,3 +133,8 @@ class PyMongo():
         if self.config_prefix not in current_app.extensions["pymongo"]:
             raise Exception("flask_pymongo extensions is not initialized")
         return current_app.extensions["pymongo"][self.config_prefix][1]
+
+    def get_db_from_app(self, app):
+        if self.config_prefix not in app.extensions["pymongo"]:
+            raise Exception("flask_pymongo extensions is not initialized")
+        return app.extensions["pymongo"][self.config_prefix][1]

@@ -8,7 +8,7 @@
     :license: BSD, see LICENSE for more details.
 """
 from bson import ObjectId
-from flask import Flask
+from quart import Quart
 from gridfs import GridFS
 
 from eve.io.media import MediaStorage
@@ -43,7 +43,7 @@ class GridFSMediaStorage(MediaStorage):
         if self.app is None:
             raise TypeError("Application object cannot be None")
 
-        if not isinstance(self.app, Flask):
+        if not isinstance(self.app, Quart):
             raise TypeError("Application object must be a Eve application")
 
     def fs(self, resource=None):

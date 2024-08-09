@@ -16,9 +16,7 @@ import copy
 import math
 
 import simplejson as json
-from flask import abort
-from flask import current_app as app
-from flask import request
+from quart import abort, current_app as app, request
 from werkzeug.datastructures import MultiDict
 
 from eve.auth import requires_auth
@@ -34,7 +32,7 @@ from .common import (build_response_document, document_link, epoch,
 @ratelimit()
 @requires_auth("resource")
 @pre_event
-def get(resource, **lookup):
+async def get(resource, **lookup):
     """
     Default function for handling GET requests, it has decorators for
     rate limiting, authentication and for raising pre-request events. After the
@@ -42,10 +40,10 @@ def get(resource, **lookup):
 
     .. versionadded:: 0.6.2
     """
-    return get_internal(resource, **lookup)
+    return await get_internal(resource, **lookup)
 
 
-def get_internal(resource, **lookup):
+async def get_internal(resource, **lookup):
     """Retrieves the resource documents that match the current request.
 
     :param resource: the name of the resource.
@@ -112,13 +110,13 @@ def get_internal(resource, **lookup):
     aggregation = datasource.get("aggregation")
 
     if aggregation:
-        return _perform_aggregation(
+        return await _perform_aggregation(
             resource, aggregation["pipeline"], aggregation["options"]
         )
-    return _perform_find(resource, lookup)
+    return await _perform_find(resource, lookup)
 
 
-def _perform_aggregation(resource, pipeline, options):
+async def _perform_aggregation(resource, pipeline, options):
     """
     .. versionadded:: 0.7
     """
@@ -238,7 +236,7 @@ def _perform_aggregation(resource, pipeline, options):
     return response, None, None, 200, []
 
 
-def _perform_find(resource, lookup):
+async def _perform_find(resource, lookup):
     """
     .. versionadded:: 0.7
     """
@@ -302,7 +300,7 @@ def _perform_find(resource, lookup):
 @ratelimit()
 @requires_auth("item")
 @pre_event
-def getitem(resource, **lookup):
+async def getitem(resource, **lookup):
     """
     Default function for handling GET requests to document endpoints, it has
     decorators for rate limiting, authentication and for raising pre-request
@@ -311,10 +309,10 @@ def getitem(resource, **lookup):
 
     .. versionadded:: 0.6.2
     """
-    return getitem_internal(resource, **lookup)
+    return await getitem_internal(resource, **lookup)
 
 
-def getitem_internal(resource, **lookup):
+async def getitem_internal(resource, **lookup):
     """
     :param resource: the name of the resource to which the document belongs.
     :param **lookup: the lookup query.

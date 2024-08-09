@@ -13,7 +13,7 @@
 """
 from bson import ObjectId, decimal128
 from bson.dbref import DBRef
-from flask import current_app as app
+from quart import current_app as app
 from werkzeug.datastructures import FileStorage
 
 from eve.auth import auth_field_and_value
